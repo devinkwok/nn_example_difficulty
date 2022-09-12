@@ -1,0 +1,5 @@
+.vscode
+*.pyc
+old/*
+outputs/*
+TODO.txt
