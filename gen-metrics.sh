@@ -22,9 +22,8 @@ else
     source $SLURM_TMPDIR/env/bin/activate
 fi
 
-OUTPUT="./test-outputs"
-# EXAMPLES=10000
-EXAMPLES=100
+OUTPUT="./outputs"
+EXAMPLES=10000
 
 CKPT_ROOT=$HOME/scratch/open_lth_data/
 
@@ -33,13 +32,12 @@ CKPT_ROOT=$HOME/scratch/open_lth_data/
 # MLP-3 lottery_ab596c041ffd39d837f0a60d39d86c72
 
 CKPT=(  \
+    lottery_06e3ceea2dae7621529556ef969cf803  \
+    lottery_938ede76e304643f5466ed419261dc65  \
     lottery_ab596c041ffd39d837f0a60d39d86c72  \
 )
-    # lottery_06e3ceea2dae7621529556ef969cf803  \
-    # lottery_938ede76e304643f5466ed419261dc65  \
 
-# REPLICATE=($(seq 1 1 5))
-REPLICATE=($(seq 1 1 1))
+REPLICATE=($(seq 1 1 5))
 
 parallel --delay=15 --linebuffer --jobs=3  \
     python -m gen_metrics  \

@@ -45,7 +45,7 @@ prune_fraction, prune_ckpts = get_iterative_magnitude_pruning_checkpoints(
                 hparams, ckpt_dir, args.replicate)
 prune_logits = compute_logits_for_checkpoints(prune_ckpts, model, dataloader, device=args.device)
 prune_pointwise = pointwise_metrics(prune_logits, labels)
-prune_forget = perturb_forget_metrics(train_logits, labels)
+prune_forget = perturb_forget_metrics(prune_logits, labels)
 
 # add prefix, average over training/pruning where applicable
 metrics = {
@@ -55,6 +55,10 @@ metrics = {
     **add_prefix("prune", avg_metrics(prune_pointwise)),
     **add_prefix("prune", prune_forget),
 }
+#TODO prediction_depth filter for the following layers:
+# MLP: dense, softmax
+# VGG: conv, softmax
+# ResNet: initial bn, block sum, softmax
 
 # save metrics
 save_file = save_metrics_dict(metrics, args.out_dir, args.ckpt, args.replicate)

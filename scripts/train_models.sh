@@ -29,5 +29,6 @@ parallel --delay=15 --linebuffer --jobs=3  \
         --replicate={2}  \
         --levels=20  \
         --rewinding_steps=160ep  \
+        --save_every_n_epochs=1  \
   ::: ${MODEL[@]}  \
   ::: ${REPLICATE[@]}  \
