@@ -6,32 +6,32 @@ import numpy.testing as npt
 from difficulty.metrics import *
 
 
+class ArgsUnchanged:
+    """Context manager for testing that arguments are not modified in place
+    by some operation.
+    """
+
+    def __init__(self, *args: List[np.ndarray]) -> None:
+        self.references = args
+        self.originals = [np.copy(x) for x in args]
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        for x, y in zip(self.references, self.originals):
+            npt.assert_array_equal(x, y)
+
+
 class TestMetrics(unittest.TestCase):
-
-
-    class ArgsUnchanged:
-        """Context manager for testing that arguments are not modified in place
-        by some operation.
-        """
-
-        def __init__(self, *args: List[np.ndarray]) -> None:
-            self.references = args
-            self.originals = [np.copy(x) for x in args]
-
-        def __enter__(self):
-            pass
-
-        def __exit__(self, exc_type, exc_value, exc_tb):
-            for x, y in zip(self.references, self.originals):
-                npt.assert_array_equal(x, y)
 
     def test_ArgsUnchanged(self):
         logit = self.logits[0]
         idx = np.zeros(len(logit.shape), dtype=int)
-        with self.ArgsUnchanged(logit):
+        with ArgsUnchanged(logit):
             np.put(np.copy(logit), idx, 0.)
         try:  # modifying array in place should raise exception
-            with self.ArgsUnchanged(logit):
+            with ArgsUnchanged(logit):
                 np.put(logit, idx, 0.)
             self.assertFalse()
         except:
@@ -76,7 +76,7 @@ class TestMetrics(unittest.TestCase):
 
     def test_softmax(self):
         for logit in self.logits:
-            with self.ArgsUnchanged(logit):
+            with ArgsUnchanged(logit):
                 x = softmax(logit)
             self.assertEqual(x.shape, logit.shape)
             npt.assert_array_less(0, x)
@@ -86,13 +86,13 @@ class TestMetrics(unittest.TestCase):
 
     def test_zero_one_accuracy(self):
         for logit, label in zip(self.logits, self.labels):
-            with self.ArgsUnchanged(logit, label):
+            with ArgsUnchanged(logit, label):
                 x = zero_one_accuracy(logit, label)
             self.assertEqual(x.shape, logit.shape[:-1])
 
     def test_entropy(self):
         for logit, label in zip(self.logits, self.labels):
-            with self.ArgsUnchanged(logit, label):
+            with ArgsUnchanged(logit, label):
                 x = entropy(logit, label)
             self.assertEqual(x.shape, logit.shape[:-1])
             npt.assert_array_less(0, x)
@@ -100,7 +100,7 @@ class TestMetrics(unittest.TestCase):
     def test_class_confidence(self):
         for logit, label, zeros in zip(self.logits, self.labels, self.zero_labels):
             prob = softmax(logit)
-            with self.ArgsUnchanged(prob, label):
+            with ArgsUnchanged(prob, label):
                 x = class_confidence(prob, label)
             self.assertEqual(x.shape, logit.shape[:-1])
             x = class_confidence(prob, zeros)
@@ -109,7 +109,7 @@ class TestMetrics(unittest.TestCase):
     def test_max_confidence(self):
         for logit in self.logits:
             prob = softmax(logit)
-            with self.ArgsUnchanged(prob):
+            with ArgsUnchanged(prob):
                 x = max_confidence(prob)
             self.assertEqual(x.shape, logit.shape[:-1])
             self.assertFalse(np.any(np.broadcast_to(np.expand_dims(x, -1), logit.shape) < prob))
@@ -117,7 +117,7 @@ class TestMetrics(unittest.TestCase):
     def test_margin(self):
         for logit, label, acc in zip(self.logits, self.labels, self.acc):
             prob = softmax(logit)
-            with self.ArgsUnchanged(prob, label):
+            with ArgsUnchanged(prob, label):
                 x = margin(prob, label)
             self.assertEqual(x.shape, logit.shape[:-1])
             npt.assert_array_less(0, x[acc])
@@ -126,7 +126,7 @@ class TestMetrics(unittest.TestCase):
     def test_error_l2_norm(self):
         for logit, label in zip(self.logits, self.labels):
             prob = softmax(logit)
-            with self.ArgsUnchanged(prob, label):
+            with ArgsUnchanged(prob, label):
                 x = error_l2_norm(prob, label)
             self.assertEqual(x.shape, logit.shape[:-1])
             npt.assert_array_less(0, x)
@@ -140,7 +140,7 @@ class TestMetrics(unittest.TestCase):
 
     def test_forgetting(self):
         for acc in self.acc:
-            with self.ArgsUnchanged(acc):
+            with ArgsUnchanged(acc):
                 x = forgetting_events(acc)
             target_shape = list(acc.shape)
             target_shape[-2] += 1
@@ -154,7 +154,7 @@ class TestMetrics(unittest.TestCase):
     def test_count_forgetting(self):
         for acc in self.acc:
             x = forgetting_events(acc)
-            with self.ArgsUnchanged(x):
+            with ArgsUnchanged(x):
                 a = count_events_over_steps(x, 1)
                 b = count_events_over_steps(x, 0)
                 c = count_events_over_steps(x, -1)
@@ -170,7 +170,7 @@ class TestMetrics(unittest.TestCase):
     def test_first_learn(self):
         for acc in self.acc:
             x = forgetting_events(acc)
-            with self.ArgsUnchanged(x):
+            with ArgsUnchanged(x):
                 first = first_learn(x)
             self.assertEqual(first.shape, x.shape[:-2] + x.shape[-1:])
             npt.assert_array_less(first, acc.shape[-2] + 1)
@@ -183,7 +183,7 @@ class TestMetrics(unittest.TestCase):
     def test_is_unforgettable(self):
         for acc in self.acc:
             x = forgetting_events(acc)
-            with self.ArgsUnchanged(x):
+            with ArgsUnchanged(x):
                 forget = is_unforgettable(x)
             target_shape = x.shape[:-2] + x.shape[-1:]
             self.assertEqual(forget.shape, target_shape)
@@ -196,7 +196,7 @@ class TestMetrics(unittest.TestCase):
     def test_first_unforgettable(self):
         for acc in self.acc:
             x = forgetting_events(acc)
-            with self.ArgsUnchanged(x):
+            with ArgsUnchanged(x):
                 first = first_unforgettable(x)
             self.assertEqual(first.shape, x.shape[:-2] + x.shape[-1:])
         # check edge cases
@@ -207,7 +207,7 @@ class TestMetrics(unittest.TestCase):
 
     def test_perturb_forgetting_events(self):
         for acc in self.acc:
-            with self.ArgsUnchanged(acc):
+            with ArgsUnchanged(acc):
                 x = perturb_forgetting_events(acc)
             target_shape = list(acc.shape)
             target_shape[-2] += 1
@@ -221,7 +221,7 @@ class TestMetrics(unittest.TestCase):
     def test_perturb_first_forget(self):
         for acc in self.acc:
             x = perturb_forgetting_events(acc)
-            with self.ArgsUnchanged(x):
+            with ArgsUnchanged(x):
                 first = perturb_first_forget(x)
             self.assertEqual(first.shape, x.shape[:-2] + x.shape[-1:])
         # check edge cases
@@ -232,7 +232,7 @@ class TestMetrics(unittest.TestCase):
 
     def test_rank(self):
         for logit in self.logits:
-            with self.ArgsUnchanged(logit):
+            with ArgsUnchanged(logit):
                 x = rank(logit)
             npt.assert_array_equal(np.argsort(x, axis=-1), np.argsort(logit, axis=-1))
 
