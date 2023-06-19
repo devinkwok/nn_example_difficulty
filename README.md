@@ -4,10 +4,10 @@ Example difficulty
 Usage
 -----
 
-Requires `open_lth` (wrongu fork) as submodule: run:
+Requires `open_lth` (devinkwok fork) as submodule, run:
 
 ```
-git submodule add git@github.com:wrongu/open_lth.git
+git submodule add git@github.com:devinkwok/open_lth.git
 git submodule init && git submodule update
 ```
 

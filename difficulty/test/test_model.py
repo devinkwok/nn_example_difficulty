@@ -6,7 +6,7 @@ import torch.nn as nn
 
 
 from open_lth.models import cifar_resnet
-from difficulty.model.open_lth_utils import get_hparams
+from open_lth.api import get_hparams_dict
 from difficulty.model.eval import evaluate_model, evaluate_intermediates
 from difficulty.metrics.representation import *
 
@@ -26,7 +26,7 @@ class TestModel(unittest.TestCase):
                     )
 
     def test_get_hparams(self):
-        hparams = get_hparams("./difficulty/test")
+        hparams = get_hparams_dict("./difficulty/test")
         self.assertTrue("Dataset" in hparams)
         self.assertTrue("Model" in hparams)
         self.assertTrue("Pretraining Dataset" in hparams)

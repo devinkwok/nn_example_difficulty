@@ -1,9 +1,9 @@
+from copy import deepcopy
 from collections import OrderedDict
 from typing import Iterable, List, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
-from tqdm import tqdm
 
 
 def is_identity(x: torch.tensor, y: torch.tensor):
@@ -62,41 +62,53 @@ class SaveIntermediateHook:
             self.intermediates[key] = value
 
 
-def evaluate_intermediates(model, dataloader, device="cuda", named_modules: Iterable[Tuple[str, nn.Module]]=None, include: List[str]=None, exclude: List[str]=None, verbose=False):
+class IntermediateGradientHook:
+    pass  #TODO
+    # include inputs as gradients
+    # use functorch?
+
+
+def evaluate_intermediates(
+        model,
+        dataloader,
+        device="cuda",
+        named_modules: Iterable[Tuple[str, nn.Module]]=None,
+        include: List[str]=None,
+        exclude: List[str]=None,
+        verbose=False,
+):
     if named_modules is None:
-        named_modules = model.named_modules()
-    if verbose: print(model, intermediates.get_module_names(), sep="\n")
+        named_modules = list(model.named_modules())
+    if verbose: print(model, "MODULES", *[k for k, v in named_modules], sep="\n")
+    model.to(device=device)
     model.eval()
-    outputs = {}
-    intermediates = SaveIntermediateHook(named_modules, include=include, exclude=exclude, device=device)
+    intermediates = SaveIntermediateHook(
+        named_modules, include=include, exclude=exclude, device=device)
     with torch.no_grad():
-        for i, (batch_examples, _) in enumerate(dataloader):
+        for i, (batch_examples, labels) in enumerate(dataloader):
             with intermediates as hidden:
                 if verbose: print(f"...batch {i}")
                 batch_examples = batch_examples.to(device=device)
-                _ = model(batch_examples)
-                # Concatenate batch to output
-                for k, v in hidden.items():
-                    if k in outputs:
-                        outputs[k] = np.concatenate([outputs[k], v.detach().cpu().numpy()])
-                    else:
-                        outputs[k] = v.detach().cpu().numpy()
-    return outputs
+                labels = labels.to(device=device)
+                output = model(batch_examples)
+                yield batch_examples, hidden, output, labels
 
 
-def evaluate_model(model, dataloader, device="cuda"):
-    modules = model.named_modules()
-    (first_name, first_layer), *_ = modules  # the first module contains all others
-    named_modules = [(first_name, first_layer)]
-    include = first_name + ".out"  # only get the output of the containing module
-    y = evaluate_intermediates(model, dataloader, device, named_modules=named_modules, include=[include])
-    return y[include]
-
-
-def compute_logits_for_checkpoints(ckpt_files, model, dataloader, device="cuda"):
-    logits = []
-    for file in tqdm(ckpt_files):
-        state_dict = torch.load(file)
+def evaluate_model(model, dataloader, state_dict=None, device="cuda", return_accuracy=False, loss_fn=None):
+    if state_dict is not None:
+        model = deepcopy(model)
         model.load_state_dict(state_dict)
-        logits.append(evaluate_model(model, dataloader, device=device, output_only=True))
-    return np.stack(logits, axis=0)
+    eval_iterator = evaluate_intermediates(
+        model, dataloader, device, named_modules=[])
+    all_outputs, all_acc, all_loss = [], [], []
+    for _, _, outputs, labels in eval_iterator:
+        acc = torch.argmax(outputs, dim=-1) == labels
+        all_outputs.append(outputs.detach().cpu().numpy())
+        all_acc.append(acc.detach().cpu().numpy())
+        if loss_fn is not None:
+            loss = loss_fn(outputs, labels)
+            all_loss.append(loss.detach().cpu().numpy())
+    all_loss = None if loss_fn is None else np.concatenate(all_loss)
+    if return_accuracy or loss_fn is not None:
+        return all_outputs, np.concatenate(all_acc), all_loss
+    return all_outputs
