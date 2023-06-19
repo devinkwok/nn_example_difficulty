@@ -1,5 +1,6 @@
 from itertools import product
 from typing import OrderedDict
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -8,7 +9,7 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.append("../")
 from difficulty.metrics import rank
-from difficulty.utils import select_all_replicates, average_columns
+from difficulty.utils import select_all_replicates, average_columns, combine_metrics_into_df
 
 
 CMAP = plt.get_cmap("plasma")
@@ -18,6 +19,13 @@ model_names = OrderedDict()
 model_names["ab596c041ffd39d837f0a60d39d86c72"] = "MLP-3"
 model_names["06e3ceea2dae7621529556ef969cf803"] = "VGG-16"
 model_names["938ede76e304643f5466ed419261dc65"] = "ResNet-20"
+
+
+def load_metrics(hparams_df):
+    run_hash = [Path(x).stem for x in hparams_df['path']]
+    df, metrics, (prefix, models, replicates) = combine_metrics_into_df("../outputs/", include=run_hash)
+    metrics = order_metrics(metrics)
+    hparams_df  #TODO
 
 
 def order_metrics(metrics):

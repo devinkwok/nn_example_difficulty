@@ -53,19 +53,12 @@ def add_prefix(prefix, metrics: Dict):
     return {prefix + "_" + k: v for k, v in metrics.items()}
 
 
-def save_metrics_dict(metrics: Dict, out_dir: Path, *args):
-    out_dir.mkdir(exist_ok=True)
-    save_file = "_".join([str(arg) for arg in args]) + "_metrics.pt"
-    print(out_dir, save_file)
-    torch.save(metrics,  out_dir / save_file)
-    return out_dir / save_file
-
-
-def get_available_metrics(metric_dir: Path):
+def get_available_metrics(metric_dir: Path, include: List[str] = []):
     fields = []
     for file in metric_dir.glob("*"):
         if file.name.endswith("_metrics.pt"):
-            fields.append(file.name.split("_")[:-1] + [file])
+            if not include or any([x in file.name for x in include]):
+                fields.append(file.name.split("_")[:-1] + [file])
     return fields
 
 
@@ -77,8 +70,8 @@ def combine_dataframes_with_prefix(**prefix_and_df: Dict[str, pd.DataFrame]) -> 
     return pd.DataFrame(combined)
 
 
-def combine_metrics_into_df(metric_dir: Path):
-    metrics = get_available_metrics(metric_dir)
+def combine_metrics_into_df(metric_dir: Path, include: List[str] = []):
+    metrics = get_available_metrics(metric_dir, include)
     dfs = OrderedDict()
     properties = []
     metric_names = None
@@ -115,11 +108,50 @@ def select_all_replicates(df: pd.DataFrame, *args):
     return df[selected]
 
 
-def average_columns(df: pd.DataFrame, use_median=False):
-    data = df.to_numpy()
-    if use_median:
-        return np.median(data, axis=-1)
-    return np.mean(data, axis=-1)
+def _get_columns_by_name_contains(df: pd.DataFrame, metric_name: str):
+    return [x for x in df.columns if metric_name in x]
+
+
+def _get_columns_by_hparams(df: pd.DataFrame, row: pd.Series):
+    run_hash = Path(row['path']).stem
+    return [x for x in df.columns if run_hash in x]
+
+
+def filter_cols_by_hparams(df: pd.DataFrame, hparams: pd.DataFrame):
+    columns = []
+    for _, row in hparams.iterrows():
+        columns = columns + _get_columns_by_hparams(df, row)
+    return df[columns]
+
+
+def filter_cols_by_run(df: pd.DataFrame, row: pd.Series):
+    return df[_get_columns_by_hparams(df, row)]
+
+
+def filter_cols_by_name_contains(df: pd.DataFrame, metric_name: str):
+    columns = _get_columns_by_name_contains(df, metric_name)
+    return df[columns]
+
+
+def get_split_mask(df: pd.DataFrame, splits):
+    mask = []
+    for col in df.columns:
+        #TODO hack, need to get model name from col name
+        split = filter_cols_by_name_contains(splits, col[:40])
+        if len(split.columns) != 1:
+            raise ValueError(f"Exactly 1 train/test split required in {split}")
+        mask.append(split.to_numpy())
+    return np.concatenate(mask, axis=1)
+
+
+def average_columns(df: pd.DataFrame, reduction="mean", mask=None):
+    data = df.to_numpy().astype(np.float32)
+    if mask is not None:
+        data[mask] = np.nan
+    if reduction == "median":
+        return np.nanmedian(data, axis=-1)
+    elif reduction == "mean":
+        return np.nanmean(data, axis=-1)
 
 
 def print_stats(metrics: Dict):
