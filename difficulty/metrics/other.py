@@ -16,3 +16,6 @@ def rank(metric: np.ndarray):
     ranks = np.empty_like(sorted_idx)
     np.put_along_axis(ranks, sorted_idx, rank_idx, axis=-1)
     return ranks
+
+
+#TODO complexity gap closed-form computation on data

@@ -30,3 +30,9 @@ def prediction_depth(intermediate_activations: Dict[str, np.ndarray], consensus_
 
 
 # TODO (self)-supervised prototypes sorscher
+def supervised_prototypes(representations: np.ndarray, labels: np.ndarray):
+    pass  #TODO distance to known label centroids
+
+
+def self_supervised_prototypes(representations: np.ndarray, k: int):
+    pass  #TODO distance after k-means clustering
