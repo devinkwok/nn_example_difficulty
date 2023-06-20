@@ -127,8 +127,8 @@ class TestModel(unittest.TestCase):
         _, y, _, _ = self._combine_batches(evaluate_intermediates(self.model, self.dataloader, device="cpu"))
         pd = prediction_depth(y, self.labels, k=2)
         self.assertEqual(pd.shape, (self.n,))
-        self.assertTrue(np.all(0 <= pd))
-        self.assertTrue(np.all(pd <= len(y)))
+        self.assertTrue(torch.all(0 <= pd))
+        self.assertTrue(torch.all(pd <= len(y)))
 
 
 if __name__ == '__main__':
