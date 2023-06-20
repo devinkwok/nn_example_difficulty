@@ -9,6 +9,22 @@ Following functions assume dimensions (..., T, N) where T is steps (iterations)
 import torch
 
 
+__all__ = [
+    "forgetting_events",
+    "learning_events",
+    "perturb_forgetting_events",
+    "perturb_learning_events",
+    "count_events",
+    "first_event_time",
+    "last_event_time",
+    "first_learn",
+    "is_unforgettable",
+    "count_forgetting",
+    "first_unforgettable",
+    "perturb_first_forget",
+]
+
+
 def _change_events(zero_one_accuracy: torch.Tensor, is_forward: bool, is_falling: bool) -> torch.Tensor:
     single_iteration = zero_one_accuracy[..., 0:1, :]
     zeros = torch.zeros_like(single_iteration)

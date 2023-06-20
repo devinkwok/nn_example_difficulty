@@ -1,15 +1,12 @@
 import unittest
-from pathlib import Path
 from collections import defaultdict
-import numpy as np
 import numpy.testing as npt
 import torch
-import torch.nn as nn
 
 from open_lth.models import cifar_resnet
 from open_lth.models.initializers import kaiming_normal
 from difficulty.model.eval import evaluate_model, evaluate_intermediates
-from difficulty.metrics.representation import *
+from difficulty.metrics import *
 
 
 class TestModel(unittest.TestCase):

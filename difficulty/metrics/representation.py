@@ -8,6 +8,13 @@ from difficulty.metrics.forget import first_unforgettable
 from difficulty.model.eval import match_key
 
 
+__all__ = [
+    "prediction_depth",
+    "supervised_prototypes",
+    "self_supervised_prototypes",
+]
+
+
 def _nearest_neighbour(representations: torch.Tensor, labels: torch.Tensor, k: int) -> torch.Tensor:
     knn = KNeighborsClassifier(k)  # use standard Euclidean distance
     representations = representations.reshape(representations.shape[0], -1).detach().cpu().numpy()
