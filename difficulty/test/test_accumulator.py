@@ -11,18 +11,21 @@ class TestMetrics(unittest.TestCase):
 
     def setUp(self) -> None:
         self.data = {
+            "bool": torch.randn(2, 3, 2) > 0.,
+            "arange": torch.arange(6*4*3, dtype=torch.float32).reshape(6, 4, 3),
             "randn-small": torch.randn(2, 3, 2),
             "randn-large": torch.randn(10, 20, 100, dtype=torch.float32),
-            "arange-small": torch.arange(8).reshape(2, 2, 2).to(dtype=torch.float32),
-            "arange-large": torch.arange(6*4*3, dtype=torch.float32).reshape(6, 4, 3),
         }
         self.tmp_file = Path("difficulty/test/tmp_test_accumulator_save_file.npz")
+        self.dtype = torch.float64
 
     def tearDown(self) -> None:
-        os.remove(self.tmp_file)
+        if self.tmp_file.exists():
+            os.remove(self.tmp_file)
 
-    @staticmethod
-    def assert_tensor_equal(x, y, rtol=0.00001, atol=1e-8):
+    def assert_tensor_equal(self, x, y, rtol=0.00001, atol=1e-8):
+        x = x.to(dtype=self.dtype)
+        y = y.to(dtype=self.dtype)
         if x.shape != y.shape:
             raise AssertionError(x.shape, y.shape)
         if not torch.all(torch.isnan(x) == torch.isnan(y)):
@@ -31,7 +34,7 @@ class TestMetrics(unittest.TestCase):
                 raise AssertionError(x[idx], y[idx])
         return True
 
-    def _test_accumulator(self, AccumulateClass, ref_fn, data, identity_value):
+    def _test_accumulator(self, AccumulateClass, data, identity_value, ref_fn):
         # identity AxBxC
         with ArgsUnchanged(data):
             obj = AccumulateClass()
@@ -61,14 +64,23 @@ class TestMetrics(unittest.TestCase):
             self.assert_tensor_equal(obj.get(), obj_T.get())
 
     def test_mean(self):
+        mean_fn = lambda x, dim: torch.mean(x.to(dtype=self.dtype), dim=dim)
         for msg, data in self.data.items():
             with self.subTest(msg, data=data[0, 0, 0]):
-                self._test_accumulator(accumulator.OnlineMean, torch.mean, data, data)
+                self._test_accumulator(accumulator.OnlineMean,
+                                       data,
+                                       data.to(self.dtype),
+                                       mean_fn)
 
     def test_variance(self):
+        var_fn = lambda x, dim: torch.std(x.to(dtype=self.dtype), dim=dim)**2
         for msg, data in self.data.items():
             with self.subTest(msg, data=data[0, 0, 0]):
-                self._test_accumulator(accumulator.OnlineVariance, lambda x, dim: torch.std(x, dim=dim)**2, data, torch.full_like(data, torch.nan))
+                self._test_accumulator(accumulator.OnlineVariance,
+                                       data,
+                                       torch.full_like(data, torch.nan, dtype=self.dtype),
+                                       var_fn)
+
 
 if __name__ == '__main__':
     unittest.main()
