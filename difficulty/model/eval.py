@@ -100,15 +100,16 @@ def evaluate_model(model, dataloader, state_dict=None, device="cuda", return_acc
         model.load_state_dict(state_dict)
     eval_iterator = evaluate_intermediates(
         model, dataloader, device, named_modules=[])
-    all_outputs, all_acc, all_loss = [], [], []
+    all_outputs, all_labels, all_acc, all_loss = [], [], [], []
     for _, _, outputs, labels in eval_iterator:
         acc = torch.argmax(outputs, dim=-1) == labels
-        all_outputs.append(outputs.detach().cpu().numpy())
-        all_acc.append(acc.detach().cpu().numpy())
+        all_outputs.append(outputs)
+        all_labels.append(labels)
+        all_acc.append(acc)
         if loss_fn is not None:
             loss = loss_fn(outputs, labels)
-            all_loss.append(loss.detach().cpu().numpy())
-    all_loss = None if loss_fn is None else np.concatenate(all_loss)
+            all_loss.append(loss)
+    all_loss = None if loss_fn is None else torch.cat(all_loss)
     if return_accuracy or loss_fn is not None:
-        return all_outputs, np.concatenate(all_acc), all_loss
-    return all_outputs
+        return torch.cat(all_outputs), torch.cat(all_labels), torch.cat(all_acc), all_loss
+    return torch.cat(all_outputs)

@@ -6,100 +6,128 @@ as well as additional similar metrics.
 
 Following functions assume dimensions (..., T, N) where T is steps (iterations)
 """
-import numpy as np
+import torch
 
 
-def _forgetting_events(zero_one_accuracy: np.ndarray, is_forward: bool) -> np.ndarray:
+def _change_events(zero_one_accuracy: torch.Tensor, is_forward: bool, is_falling: bool) -> torch.Tensor:
     single_iteration = zero_one_accuracy[..., 0:1, :]
-    zeros = np.zeros_like(single_iteration)
-    ones = np.ones_like(single_iteration)
+    zeros = torch.zeros_like(single_iteration)
+    ones = torch.ones_like(single_iteration)
     start = zeros if is_forward else ones
     end = ones if is_forward else zeros
-    accuracies = np.concatenate([start, zero_one_accuracy, end], axis=-2)
-    accuracies = np.array(accuracies, dtype=int)
-    diffs = accuracies[..., 1:, :] - accuracies[..., :-1, :]
-    return diffs
+    accuracies = torch.concatenate([start, zero_one_accuracy, end], dim=-2)
+    prev = accuracies[..., :-1, :]
+    next = accuracies[..., 1:, :]
+    if is_falling:  # events transitioning from 1 to 0
+        return torch.logical_and(prev, torch.logical_not(next))
+    else:  # 0 to 1 (always guaranteed to occur at least once)
+        return torch.logical_and(torch.logical_not(prev), next)
 
 
-def count_events_over_steps(events: np.ndarray, match) -> np.ndarray:
-    return np.sum(events == match, axis=-2)
+def forgetting_events(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
+    return _change_events(zero_one_accuracy, is_forward=True, is_falling=True)
 
 
-def _first_event_over_steps(events: np.ndarray, match) -> np.ndarray:
-    matches = (events == match)
+def learning_events(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
+    return _change_events(zero_one_accuracy, is_forward=True, is_falling=False)
+
+
+def perturb_forgetting_events(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
+    return _change_events(zero_one_accuracy, is_forward=False, is_falling=True)
+
+
+def perturb_learning_events(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
+    return _change_events(zero_one_accuracy, is_forward=False, is_falling=False)
+
+
+def count_events(events: torch.Tensor) -> torch.Tensor:
+    return torch.count_nonzero(events, dim=-2)
+
+
+def first_event_time(events: torch.Tensor) -> torch.Tensor:
     # force match at T if there are no matches
-    guaranteed_match = np.full_like(matches[..., 0:1, :], match)
-    matches = np.concatenate([matches, guaranteed_match], axis=-2)
-    # from np.argmax: In case of multiple occurrences of the maximum values
+    guaranteed_event = torch.ones_like(events[..., 0:1, :])
+    # make numeric to allow use of argmax
+    events_plus_extra = 1*torch.concatenate([events, guaranteed_event], dim=-2)
+    # from torch.argmax: In case of multiple occurrences of the maximum values
     # the indices corresponding to the first occurrence are returned.
-    return np.argmax(matches, axis=-2)
+    first_event = torch.argmax(events_plus_extra, dim=-2)
+    return first_event
 
 
-def _last_event_over_steps(events: np.ndarray, match) -> np.ndarray:
-    reversed = np.flip(events, axis=-2)
-    backward_idx = _first_event_over_steps(reversed, match)
-    return events.shape[-2] - 1 - backward_idx
+def last_event_time(events: torch.Tensor) -> torch.Tensor:
+    reversed = torch.flip(events, dims=[-2])
+    backward_idx = first_event_time(reversed)
+    last_event = events.shape[-2] - 1 - backward_idx
+    return last_event
 
 
-def forgetting_events(zero_one_accuracy: np.ndarray) -> np.ndarray:
-    return _forgetting_events(zero_one_accuracy, is_forward=True)
+def first_learn(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
+    """Equivalent to first_event_time(learning_events(zero_one_accuracy))
 
-
-def count_forgetting(forgetting_events: np.ndarray) -> np.ndarray:
-    """
     Args:
-        forgetting_events (np.ndarray): output of forgetting_events() of shape (...,T+1, N)
-            where T is the step
+        zero_one_accuracy (torch.Tensor): output of pointwise.zero_one_accuracy(),
+            bool tensor of shape (...,T+1, N) where T is the step
 
     Returns:
-        np.ndarray: number of forgetting events
-    """
-    return count_events_over_steps(forgetting_events, -1)
-
-
-def first_learn(forgetting_events: np.ndarray) -> np.ndarray:
-    """
-    Args:
-        forgetting_events (np.ndarray): output of forgetting_events() of shape (...,T+1, N)
-            where T is the step
-
-    Returns:
-        np.ndarray: iteration at which an example is first learned, from 0 to T inclusive
+        torch.Tensor: iteration at which an example is first learned, from 0 to T inclusive
             0 means always learned, T means never learned
     """
-    return _first_event_over_steps(forgetting_events, 1)
+    events = learning_events(zero_one_accuracy)
+    return first_event_time(events)
 
 
-def is_unforgettable(forgetting_events: np.ndarray) -> np.ndarray:
+def is_unforgettable(learning_events: torch.Tensor, forgetting_events: torch.Tensor) -> torch.Tensor:
     """
     Args:
-        first_learn (np.ndarray): output of first_learn() of shape (...,T+1, N)
-            where T is the step
+        learning_events (torch.Tensor): output of learning_events() or perturb_learning_events()
+            with shape (...,T+1, N) where T is the step
+        forgetting_events (torch.Tensor): output of forgetting_events() or perturb_forgetting_events()
+            with shape (...,T+1, N) where T is the step
 
     Returns:
-        np.ndarray: 0 if example is forgotten, 1 if example is not forgotten (..., N)
+        torch.Tensor: 0 if example is forgotten, 1 if example is not forgotten (..., N)
     """
-    t = forgetting_events.shape[-2] - 1
-    learn = first_learn(forgetting_events)
+    t = learning_events.shape[-2] - 1
+    learn = first_learn(learning_events)
     forget = count_forgetting(forgetting_events)
-    return np.logical_and(learn < t, forget == 0)
+    unforgettable = torch.logical_and(learn < t, forget == 0)
+    return unforgettable
 
 
-def first_unforgettable(forgetting_events: np.ndarray) -> np.ndarray:
-    """Also called iteration learned in
+def count_forgetting(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
+    """Equivalent to count_events(forgetting_events(zero_one_accuracy))
+
+    Args:
+        zero_one_accuracy (torch.Tensor): output of pointwise.zero_one_accuracy(),
+            bool tensor of shape (...,T+1, N) where T is the step
+
+    Returns:
+        torch.Tensor: number of forgetting events
+    """
+    events = forgetting_events(zero_one_accuracy)
+    return count_events(events)
+
+
+def first_unforgettable(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
+    """Equivalent to last_event_time(learning_events(zero_one_accuracy))
+
+    Also called iteration learned in
     Baldock, R., Maennel, H., and Neyshabur, B. (2021).
     Deep learning through the lens of example difficulty.
     Advances In Neural Information Processing Systems, 34.
 
+    Args:
+        zero_one_accuracy (torch.Tensor): output of pointwise.zero_one_accuracy(),
+            bool tensor of shape (...,T+1, N) where T is the step
+
     Returns:
-        np.ndarray: step after which classification is always correct
+        torch.Tensor: step after which classification is always correct
     """
-    return _last_event_over_steps(forgetting_events, 1)
+    events = learning_events(zero_one_accuracy)
+    return last_event_time(events)
 
 
-def perturb_forgetting_events(zero_one_accuracy: np.ndarray) -> np.ndarray:
-    return _forgetting_events(zero_one_accuracy, is_forward=False)
-
-
-def perturb_first_forget(perturb_forgetting_events: np.ndarray) -> np.ndarray:
-    return _first_event_over_steps(perturb_forgetting_events, -1)
+def perturb_first_forget(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
+    events = perturb_forgetting_events(zero_one_accuracy)
+    return first_event_time(events)
