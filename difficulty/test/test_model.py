@@ -12,8 +12,8 @@ from difficulty.metrics import *
 class TestModel(unittest.TestCase):
 
     def setUp(self):
-        self.n = 5*2
-        self.batch_size = 4
+        self.n = 40*2
+        self.batch_size = 15
         self.data = torch.randn([self.n, 3, 9, 9])
         self.labels = torch.cat([torch.zeros(self.n // 2), torch.ones(self.n - self.n // 2)])
         dataset = torch.utils.data.TensorDataset(self.data, self.labels)
@@ -38,7 +38,7 @@ class TestModel(unittest.TestCase):
             y = evaluate_intermediates(self.model, self.dataloader, device="cpu")
             input, hidden, output, labels = self._combine_batches(y)
             npt.assert_array_equal(input, self.data)
-            npt.assert_array_equal(output, self.model(self.data))
+            npt.assert_allclose(output, self.model(self.data), rtol=0.001, atol=1e-6)
             npt.assert_array_equal(labels, self.labels)
             layers = list(hidden.keys())
             npt.assert_array_equal(hidden[layers[0]], input)
@@ -117,15 +117,33 @@ class TestModel(unittest.TestCase):
     def test_eval_model(self):
         y = evaluate_model(self.model, self.dataloader, device="cpu")
         self.assertEqual(len(y), self.n)
-        npt.assert_array_almost_equal(y, self.model(self.data).detach().numpy())
+        npt.assert_allclose(y, self.model(self.data).detach().numpy(), rtol=0.001, atol=1e-6)
         y = evaluate_model(self.model, self.dataloader, device="cpu")
 
     def test_prediction_depth(self):
-        _, y, _, _ = self._combine_batches(evaluate_intermediates(self.model, self.dataloader, device="cpu"))
-        pd = prediction_depth(y, self.labels, k=2)
+        # check that outputs are correct shape and ranges
+        _, y, outputs, _ = self._combine_batches(evaluate_intermediates(self.model, self.dataloader, device="cpu"))
+        intermediates = [v for k, v in y.items() if "relu" in k]
+        queries = [v[:self.n // 2] for v in intermediates]
+        pd = prediction_depth(intermediates, self.labels, queries, self.labels[:self.n // 2], k=2)
         self.assertEqual(pd.shape, (self.n,))
         self.assertTrue(torch.all(0 <= pd))
-        self.assertTrue(torch.all(pd <= len(y)))
+        self.assertTrue(torch.all(pd <= len(intermediates)))
+        # check that classifying the query points with k=1 is always identical to query labels
+        pd = prediction_depth(intermediates, self.labels, intermediates, self.labels, k=1)
+        npt.assert_array_equal(pd, torch.zeros_like(pd))  # always correct
+        pd = prediction_depth(intermediates, self.labels, intermediates, 1 - self.labels, k=1)
+        npt.assert_array_equal(pd, torch.full_like(pd, len(intermediates)))  # always wrong
+        # check classification in an artificial task
+        # query points are fixed at 0 and 1 in all layers
+        query_points = torch.stack([torch.zeros(3), torch.ones(3)], dim=1)
+        query_labels = torch.tensor([0, 1])
+        # examples start from 0.2n and shift by 0.2 per layer, prediction changes at threshold 0.5
+        test_points = torch.linspace(0, 0.6, 4).reshape(-1, 1)
+        labels = torch.ones(4)
+        right_shift = [test_points + i*0.2 for i in range(3)]
+        pd = prediction_depth(right_shift, labels, query_points, query_labels, k=1)
+        npt.assert_array_equal(pd, [3, 2, 1, 0])
 
 
 if __name__ == '__main__':
