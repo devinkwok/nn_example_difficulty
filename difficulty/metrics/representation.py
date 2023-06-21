@@ -2,6 +2,7 @@ from typing import List
 import numpy as np
 import torch
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.cluster import KMeans
 
 from difficulty.metrics.forget import first_unforgettable
 
@@ -50,10 +51,56 @@ def prediction_depth(intermediate_activations: List[torch.Tensor], consensus_lab
     return first_unforgettable(match)
 
 
-# TODO (self)-supervised prototypes sorscher
-def supervised_prototypes(representations: np.ndarray, labels: np.ndarray):
-    pass  #TODO distance to known label centroids
+def supervised_prototypes(representations: torch.Tensor, labels: torch.Tensor, norm_order: int=2):
+    """From
+    Sorscher, B., Geirhos, R., Shekhar, S., Ganguli, S., & Morcos, A. (2022).
+    Beyond neural scaling laws: beating power law scaling via data pruning.
+    Advances in Neural Information Processing Systems, 35, 19523-19536.
+
+    Args:
+        representations (torch.Tensor): per-example activations. In Sorscher et al. (2022),
+            this is the embedding space of an ImageNet pre-trained self-supervised model SWaV.
+            Activations have shape (N, ...) where N is number of examples, and remaining dimensions are flattened.
+        labels (torch.Tensor): true class labels of examples, with shape (N,)
+        norm_order (int): type of norm to compute distance over. Defaults to L^2.
+
+    Returns:
+        torch.Tensor: distance from examples to label centroids (prototypes)
+            in representation space, of shape (N,)
+    """
+    distances = torch.empty(representations.shape[0], dtype=representations.dtype, device=representations.device)
+    for i in torch.unique(labels):
+        # compute centroid as mean over representations of examples
+        idx = (labels == i)
+        embeddings = representations[idx, ...]
+        prototype = torch.mean(embeddings, dim=0).broadcast_to(embeddings.shape)
+        # for each example with this label, compute distance to correct label centroid
+        distances[idx] = torch.linalg.vector_norm(embeddings - prototype, ord=norm_order)
+    return distances
 
 
-def self_supervised_prototypes(representations: np.ndarray, k: int):
-    pass  #TODO distance after k-means clustering
+def self_supervised_prototypes(representations: torch.Tensor, k: int, max_iter: int=300):
+    """From
+    Sorscher, B., Geirhos, R., Shekhar, S., Ganguli, S., & Morcos, A. (2022).
+    Beyond neural scaling laws: beating power law scaling via data pruning.
+    Advances in Neural Information Processing Systems, 35, 19523-19536.
+
+    Args:
+        representations (torch.Tensor): per-example activations. In Sorscher et al. (2022),
+            this is the embedding space of an ImageNet pre-trained self-supervised model SWaV.
+            Activations have shape (N, ...) where N is number of examples, and remaining dimensions are flattened.
+        k (int): number of means for k-means clustering.
+            Sorscher et al. (2022) recommends any value within an order of magnitude of the true number classes,
+            noting that the performance when using this metric for data pruning is not very sensitive to k.
+
+    Returns:
+        torch.Tensor: distance from examples to cluster centroids (self-supervised prototypes)
+            in representation space, of shape (N,)
+    """
+    representations = representations.reshape(representations.shape[0], -1)
+    kmeans = KMeans(n_clusters=k, max_iter=max_iter)
+    kmeans.fit(representations.detach().cpu().numpy())
+    distances = kmeans.transform(representations)
+    distances = torch.tensor(distances, dtype=representations.dtype, device=representations.device)
+    distance_to_nearest_centroid = torch.min(distances, dim=-1).values
+    return distance_to_nearest_centroid

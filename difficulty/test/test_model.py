@@ -145,6 +145,20 @@ class TestModel(unittest.TestCase):
         pd = prediction_depth(right_shift, labels, query_points, query_labels, k=1)
         npt.assert_array_equal(pd, [3, 2, 1, 0])
 
+    def test_prototypes(self):
+        _, y, _, _ = self._combine_batches(evaluate_intermediates(
+            self.model, self.dataloader, device="cpu", include=['blocks.5.relu2.']))
+        distances = supervised_prototypes(y['blocks.5.relu2.out'], self.labels)
+        self.assertEqual(distances.shape, (self.n,))
+        distances = self_supervised_prototypes(y['blocks.5.relu2.out'], k=10)
+        self.assertEqual(distances.shape, (self.n,))
+        #TODO supervised using labels from self-supervised should be equal
+        #TODO artificial data: zero mean and 1 mean
+        # distances in supervised_prototypes equal std (with known mean)
+        zero_mean = torch.randn(40, 20)
+        one_mean = torch.randn(40, 20)
+        # distances in self_supervised_prototypes with k=2 are equal or less (due to misclassification)
+
 
 if __name__ == '__main__':
     unittest.main()
