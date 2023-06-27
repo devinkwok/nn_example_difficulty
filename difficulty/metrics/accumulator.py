@@ -1,3 +1,4 @@
+from abc import ABC
 from pathlib import Path
 from collections import defaultdict
 from typing import Dict
@@ -6,7 +7,13 @@ import torch
 import numpy as np
 
 
-class Accumulator:
+__all__ = [
+    "OnlineMean",
+    "OnlineVariance",
+]
+
+
+class Accumulator(ABC):
     def __init__(self, dtype=torch.float64, **metadata_lists: Dict[str, list]):
         self.dtype = dtype  # use higher precision to minimize errors when accumulating
         self.metadata = defaultdict(list)
@@ -23,20 +30,29 @@ class Accumulator:
         return cls(**load_dict)
 
     def save(self, file: Path, **data):
+        # cannot have metadata that shares same keys as data
+        assert set(data.keys()).isdisjoint(set(self.metadata.keys()))
         save_dict = {**data, **self.metadata}
         for k, v in save_dict.items():
             if isinstance(v, torch.Tensor):
                 save_dict[k] = v.detach().cpu().numpy()
         np.savez(file, **save_dict)
 
-    def add(self, x: torch.Tensor, dim=None, **metadata):
-        data = self.metadata.copy()
+    def _add(self, x: torch.Tensor, **metadata):
         for k, v in metadata.items():
-            data[k].append(v)
+            self.metadata[k].append(v)
         x = x.to(dtype=self.dtype)
-        return x, data
+        return x
 
-    def get(self):
+    def add(self, x: torch.Tensor, dim=None, **metadata):
+        """In place operation
+        """
+        raise NotImplementedError
+
+    def get(self) -> torch.Tensor:
+        """Returns a reference and NOT a copy,
+        so will change with future calls to add()
+        """
         raise NotImplementedError
 
 
@@ -60,18 +76,19 @@ class OnlineMean(Accumulator):
             = (p*(m + n) + (q-p)*n) / (m + n)
             = p + n / (m + n) * (q - p)
         """
-        x, metadata = super().add(x, dim, **metadata)
+        x = super()._add(x, **metadata)
+        prev_n = self.n
         if dim is None:
-            n = self.n + 1
+            self.n += 1
         else:
-            n = self.n + x.shape[dim]
+            self.n += x.shape[dim]
             x = torch.mean(x, dim=dim)
         if self.mean is None:
-            mean = x
+            self.mean = x
         else:
-            ratio = self.n / n
-            mean = self.mean + (x - self.mean) * ratio
-        return OnlineMean(n=n, mean=mean, **metadata)
+            ratio = prev_n / self.n
+            self.mean += (x - self.mean) * ratio
+        return self
 
     def get(self):
         return self.mean
@@ -89,23 +106,20 @@ class OnlineVariance(Accumulator):
         super().save(file, n=self.mean.n, mean=self.mean.mean, sum_sq=self.sum_sq)
 
     def add(self, x: torch.Tensor, dim=None, **metadata):
-        x, metadata = super().add(x, dim, **metadata)
+        x = super()._add(x, **metadata)
         prev_mean = self.mean.get()
-        mean_obj = self.mean.add(x, dim=dim)
-        curr_mean = mean_obj.get()
-        n = mean_obj.n
+        self.mean.add(x, dim=dim)
+        curr_mean = self.mean.get()
         if prev_mean is None:  # only 1 sample
             prev_mean = torch.zeros_like(curr_mean)
+            self.sum_sq = torch.zeros_like(curr_mean)
         if dim is not None:  # reshape to match x
             prev_mean = prev_mean.unsqueeze(dim).broadcast_to(x.shape)
             curr_mean = curr_mean.unsqueeze(dim).broadcast_to(x.shape)
-            sum_sq = (x - curr_mean) * (x - prev_mean)
-            sum_sq = torch.sum(sum_sq, dim=dim)
+            self.sum_sq += torch.sum((x - curr_mean) * (x - prev_mean), dim=dim)
         else:
-            sum_sq = (x - curr_mean) * (x - prev_mean)
-        if self.sum_sq is not None:  # more than 1 sample
-            sum_sq += self.sum_sq
-        return OnlineVariance(sum_sq=sum_sq, mean=mean_obj.mean, n=mean_obj.n, **metadata)
+            self.sum_sq += (x - curr_mean) * (x - prev_mean)
+        return self
 
     def get(self):
         return self.sum_sq / (self.mean.n - 1)

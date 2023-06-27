@@ -38,23 +38,23 @@ class TestMetrics(unittest.TestCase):
         # identity AxBxC
         with ArgsUnchanged(data):
             obj = AccumulateClass()
-            obj = obj.add(data)
+            obj.add(data)
             self.assert_tensor_equal(obj.get(), identity_value)
         # compute over A elements of size BxC
         with ArgsUnchanged(data):
             obj = AccumulateClass()
             for y in data:
-                obj = obj.add(y)
+                obj.add(y)
             self.assert_tensor_equal(obj.get(), ref_fn(data, dim=0))
         # compute over AxB elements of size C
-        with ArgsUnchanged(data):
-            obj, obj_T = AccumulateClass(), AccumulateClass()
-            for y in data:
-                obj = obj.add(y, dim=0)
+        obj, obj_T = AccumulateClass(), AccumulateClass()
+        for y in data:
+            with ArgsUnchanged(data, y):
+                obj.add(y, dim=0)
                 obj_T = obj_T.add(y.T, dim=1)
-            self.assert_tensor_equal(obj.get(), ref_fn(data.reshape(-1, data.shape[-1]), dim=0))
-            self.assert_tensor_equal(obj.get(), obj_T.get())
-        # save and load
+        self.assert_tensor_equal(obj.get(), ref_fn(data.reshape(-1, data.shape[-1]), dim=0))
+        self.assert_tensor_equal(obj.get(), obj_T.get())
+        # save and load, and also check return value of add()
         with ArgsUnchanged(data):
             obj = AccumulateClass()
             for y in data:
