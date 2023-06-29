@@ -14,34 +14,57 @@ __all__ = [
 
 
 class Accumulator(ABC):
-    def __init__(self, dtype=torch.float64, **metadata_lists: Dict[str, list]):
-        self.dtype = dtype  # use higher precision to minimize errors when accumulating
-        self.metadata = defaultdict(list)
+
+    def __init__(self, dtype=torch.float64, device="cpu", metadata_lists: Dict[str, list]={}, **metadata):
+        # dtype allows using higher precision to minimize errors when accumulating
+        self.metadata = {**metadata, "classname": type(self).__name__, "dtype": str(dtype), "device": str(device)}
+        self.metadata_lists = defaultdict(list)
         for k, v in metadata_lists.items():
             assert isinstance(v, list)
             self.metadata[k] = v
 
+    @staticmethod
+    def str_to_torch_dtype(dtype: str) -> torch.dtype:
+        dtype = str(dtype)
+        assert dtype.startswith("torch.")
+        dtype = dtype.split("torch.")[1]
+        return getattr(torch, dtype)
+
     @classmethod
     def load(cls, file: Path):
         load_dict = dict(np.load(file))
+        metadata, data, lists = {}, {}, {}
         for k, v in load_dict.items():
+            # strip prefixes
+            if k.startswith("meta_"):
+                metadata[k[5:]] = v
+            elif k.startswith("data_"):
+                data[k[5:]] = v
+            elif k.startswith("list_"):
+                lists[k[5:]] = v
+        assert cls.__name__ == str(metadata["classname"])
+        dtype = cls.str_to_torch_dtype(metadata["dtype"])
+        for k, v in data.items():
             if isinstance(v, np.ndarray):
-                load_dict[k] = torch.tensor(v)
-        return cls(**load_dict)
+                data[k] = torch.tensor(v, dtype=dtype, device=str(metadata["device"]))
+        return cls(**metadata, metadata_lists=lists, **data)
 
     def save(self, file: Path, **data):
-        # cannot have metadata that shares same keys as data
+        # cannot have metadata that shares same keys as data, otherwise causes conflict when loading
         assert set(data.keys()).isdisjoint(set(self.metadata.keys()))
-        save_dict = {**data, **self.metadata}
-        for k, v in save_dict.items():
+        # add prefixes so that metadata and data can be stored in same npz file
+        data_dict = {"data_" + k: v for k, v in data.items()}
+        metadata = {"meta_" + k: v for k, v in self.metadata.items()}
+        lists = {"list_" + k: v for k, v in self.metadata_lists.items()}
+        for k, v in data_dict.items():
             if isinstance(v, torch.Tensor):
-                save_dict[k] = v.detach().cpu().numpy()
-        np.savez(file, **save_dict)
+                data_dict[k] = v.detach().cpu().numpy()
+        np.savez(file, **data_dict, **metadata, **lists)
 
     def _add(self, x: torch.Tensor, **metadata):
         for k, v in metadata.items():
             self.metadata[k].append(v)
-        x = x.to(dtype=self.dtype)
+        x = x.to(dtype=self.str_to_torch_dtype(self.metadata["dtype"]))
         return x
 
     def add(self, x: torch.Tensor, dim=None, **metadata):
@@ -57,53 +80,44 @@ class Accumulator(ABC):
 
 
 class OnlineMean(Accumulator):
-    def __init__(self, n=None, mean=None, dtype=torch.float64, **metadata_lists: Dict[str, list]):
-        super().__init__(dtype=dtype, **metadata_lists)
+    def __init__(self, n=None, sum=None, dtype=torch.float64, device="cpu", metadata_lists: Dict[str, list]={}, **metadata):
+        super().__init__(dtype=dtype, device=device, metadata_lists=metadata_lists, **metadata)
         if n is None:
             n = 0
         self.n = n
-        self.mean = mean
+        self.sum = sum
 
     def save(self, file: Path):
-        super().save(file, n=self.n, mean=self.mean)
+        super().save(file, n=self.n, sum=self.sum)
 
     def add(self, x: torch.Tensor, dim=None, **metadata):
-        """
-            Let p be previous mean, q be mean of new entries,
-            m be number of previous entries, and n be number of new entries.
-            Then the new mean is:
-            (p*m + q*n) / (m + n)
-            = (p*(m + n) + (q-p)*n) / (m + n)
-            = p + n / (m + n) * (q - p)
-        """
         x = super()._add(x, **metadata)
-        prev_n = self.n
         if dim is None:
             self.n += 1
         else:
             self.n += x.shape[dim]
-            x = torch.mean(x, dim=dim)
-        if self.mean is None:
-            self.mean = x
-        else:
-            ratio = prev_n / self.n
-            self.mean += (x - self.mean) * ratio
+            x = torch.sum(x, dim=dim)
+        if self.sum is None:
+            self.sum = torch.zeros_like(x)
+        self.sum += x
         return self
 
     def get(self):
-        return self.mean
+        if self.sum is None:
+            return None
+        return self.sum / self.n
 
 
 class OnlineVariance(Accumulator):
     """Welford, B. P. (1962). Note on a method for calculating corrected sums of squares and products. Technometrics, 4(3), 419-420.
     """
-    def __init__(self, n=None, mean=None, sum_sq=None, dtype=torch.float64, **metadata_lists: Dict[str, list]):
-        super().__init__(dtype=dtype, **metadata_lists)
-        self.mean = OnlineMean(n=n, mean=mean)
+    def __init__(self, n=None, sum=None, sum_sq=None, dtype=torch.float64, device="cpu", metadata_lists: Dict[str, list]={}, **metadata):
+        super().__init__(dtype=dtype, device=device, metadata_lists=metadata_lists, **metadata)
+        self.mean = OnlineMean(n=n, sum=sum, dtype=dtype, device=device)
         self.sum_sq = sum_sq
 
     def save(self, file: Path):
-        super().save(file, n=self.mean.n, mean=self.mean.mean, sum_sq=self.sum_sq)
+        super().save(file, n=self.mean.n, sum=self.mean.sum, sum_sq=self.sum_sq)
 
     def add(self, x: torch.Tensor, dim=None, **metadata):
         x = super()._add(x, **metadata)
@@ -122,4 +136,6 @@ class OnlineVariance(Accumulator):
         return self
 
     def get(self):
+        if self.sum_sq is None:
+            return None
         return self.sum_sq / (self.mean.n - 1)

@@ -12,9 +12,10 @@ class TestMetrics(unittest.TestCase):
     def setUp(self) -> None:
         self.data = {
             "bool": torch.randn(2, 3, 2) > 0.,
-            "arange": torch.arange(6*4*3, dtype=torch.float32).reshape(6, 4, 3),
-            "randn-small": torch.randn(2, 3, 2),
-            "randn-large": torch.randn(10, 20, 100, dtype=torch.float32),
+            "randn": torch.randn(10, 20, 100, dtype=torch.float32),
+            "arange-large": torch.arange(100*1000*3, dtype=torch.float32).reshape(100, 1000, 3),
+            "randn-high-bias": torch.randn(100, 2, 2) + torch.full((100, 2, 2), 100),
+            "randn-high-var": torch.cat([torch.randn(100, 2, 2), torch.full((2, 2, 2), 100)], dim=0),
         }
         self.tmp_file = Path("difficulty/test/tmp_test_accumulator_save_file.npz")
         self.dtype = torch.float64
@@ -23,16 +24,12 @@ class TestMetrics(unittest.TestCase):
         if self.tmp_file.exists():
             os.remove(self.tmp_file)
 
-    def assert_tensor_equal(self, x, y, rtol=0.00001, atol=1e-8):
+    def assert_tensor_equal(self, x, y, rtol=1e-10, atol=1e-10):
         x = x.to(dtype=self.dtype)
         y = y.to(dtype=self.dtype)
         if x.shape != y.shape:
             raise AssertionError(x.shape, y.shape)
-        if not torch.all(torch.isnan(x) == torch.isnan(y)):
-            if not torch.allclose(x, y, rtol=rtol, atol=atol):
-                idx = torch.where(torch.abs(y - x) > atol)
-                raise AssertionError(x[idx], y[idx])
-        return True
+        torch.testing.assert_allclose(x, y, rtol=rtol, atol=atol, equal_nan=True)
 
     def _test_accumulator(self, AccumulateClass, data, identity_value, ref_fn):
         # identity AxBxC
@@ -43,7 +40,7 @@ class TestMetrics(unittest.TestCase):
         # compute over A elements of size BxC
         with ArgsUnchanged(data):
             obj = AccumulateClass()
-            for y in data:
+            for i, y in enumerate(data):
                 obj.add(y)
             self.assert_tensor_equal(obj.get(), ref_fn(data, dim=0))
         # compute over AxB elements of size C
@@ -73,7 +70,7 @@ class TestMetrics(unittest.TestCase):
                                        mean_fn)
 
     def test_variance(self):
-        var_fn = lambda x, dim: torch.std(x.to(dtype=self.dtype), dim=dim)**2
+        var_fn = lambda x, dim: torch.var(x.to(dtype=self.dtype), dim=dim)
         for msg, data in self.data.items():
             with self.subTest(msg, data=data[0, 0, 0]):
                 self._test_accumulator(accumulator.OnlineVariance,
