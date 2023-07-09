@@ -2,18 +2,22 @@ from typing import Dict, List
 from pathlib import Path
 import torch
 import torch.nn as nn
+from functorch import jacrev, make_functional_with_buffers
 from difficulty.metrics.pointwise import softmax, class_confidence
 from difficulty.metrics.accumulator import Accumulator, OnlineVariance
 
 
 __all__ = [
     "ClassOutput",
-    "OnlineVarianceOfGradients",
     "input_gradient",
     "input_gradient_from_dataloader",
     "mean_color_channels",
     "mean_pixels",
     "variance_of_gradients",
+    "OnlineVarianceOfGradients",
+    "gradient_norm",
+    "functional_gradient_norm",
+    "grand_score",
 ]
 
 
@@ -98,9 +102,6 @@ def variance_of_gradients(
     Take V_p = \sqrt{1/K} \sum_{t=1}^K (S_t - \mu_p)^2 over timesteps, then take 1/N \sum_{p=1}^N V_p over pixels
 
     Args:
-        input_gradients (torch.Tensor): pre-softmax activation gradient indexed at predicted/true label with respect to the input
-            For example, a 32x32x3 image will have a gradient of the same shape.
-            Shape is (N, ...) where N is number of examples and the remainder are image dimensions.
         channel_dim (int): dimension of color channels which is averaged over. Defaults to -3,
             corresponding to images with (C, H, W) shape
     """
@@ -149,7 +150,63 @@ class OnlineVarianceOfGradients(Accumulator):
         return mean_pixels(vog)
 
 
-#TODO GraNd score from DL on a data diet
+def functional_gradient_norm(
+        model: nn.Module,
+        inputs: torch.Tensor,
+        labels: torch.Tensor=None,
+        loss_fn: callable=nn.CrossEntropyLoss(reduction="none"),
+):
+    model.eval()
+    func_model, params, buffers = make_functional_with_buffers(model)
+    model_loss = lambda p, b, x, y: loss_fn(func_model(p, b, x), y)
+    n_examples = inputs.shape[0]
+    jacobian = jacrev(model_loss, argnums=0)(params, buffers, inputs, labels)
+    gradients = [x.detach().reshape(n_examples, -1) for x in jacobian]
+    gradients = torch.cat(gradients, dim=-1)
+    grad_norm = torch.linalg.vector_norm(gradients, dim=-1)
+    return grad_norm
+
+
+def gradient_norm(
+        model: nn.Module,
+        inputs: torch.Tensor,
+        labels: torch.Tensor=None,
+        loss_fn: callable=nn.CrossEntropyLoss(reduction="none"),
+):
+    model.eval()
+    grad_flags = {k: v.requires_grad for k, v in model.named_parameters()}
+    model.requires_grad_(True)  # only need grad for inputs
+    model_loss = lambda x, y: loss_fn(model(x), y)
+    grad_norm = []
+    for x, y in zip(inputs, labels):
+        model.zero_grad()
+        loss = model_loss(x.unsqueeze(0), y.unsqueeze(0))
+        loss.backward()
+        gradient = torch.cat([x.grad.detach().flatten() for x in model.parameters()])
+        grad_norm.append(torch.linalg.norm(gradient).item())
+    for k, v in model.named_parameters():
+        v.requires_grad_(grad_flags[k])  # reset grad flags
+    return torch.tensor(grad_norm)
+
+
+def grand_score(
+        model: nn.Module,
+        dataloader: torch.utils.data.DataLoader,
+        loss_fn: callable=nn.CrossEntropyLoss(reduction="none"),
+        device: str="cpu",
+        use_functional: bool=False,
+):
+    """Paul, M., Ganguli, S., & Dziugaite, G. K. (2021).
+    Deep learning on a data diet: Finding important examples early in training.
+    Advances in Neural Information Processing Systems, 34, 20596-20607.
+
+    GraNd score: norm of flattened per-example gradient.
+    """
+    if use_functional:
+        eval_fn = lambda m, d, l: functional_gradient_norm(m, d, l, loss_fn=loss_fn)
+    else:
+        eval_fn = lambda m, d, l: gradient_norm(m, d, l, loss_fn=loss_fn)
+    return torch.cat([*_eval_loop(model, dataloader, eval_fn, device)], dim=0)
+
 
 #TODO linear approximation of adversarial input margin (Jiang et al., 2018 c.f. Baldock)
-

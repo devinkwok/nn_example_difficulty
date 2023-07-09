@@ -1,7 +1,7 @@
 import unittest
 import os
 from pathlib import Path
-from itertools import chain
+from itertools import product
 import numpy as np
 import numpy.testing as npt
 import torch
@@ -15,8 +15,8 @@ from difficulty.metrics import *
 class TestModel(unittest.TestCase):
 
     def setUp(self):
-        self.n = 5*2
-        self.batch_size = 4
+        self.n = 40*2
+        self.batch_size = 15
         self.n_outputs = 10
         self.data = torch.randn([self.n, 3, 11, 9])
         self.labels = torch.cat([torch.zeros(self.n // 2),
@@ -81,9 +81,9 @@ class TestModel(unittest.TestCase):
 
     def test_variance_of_gradients(self):
         # variance should be zero for same model
-        # vog = variance_of_gradients([self.model]*5, self.dataloader)
-        # self.assertEqual(vog.shape, (self.n,))
-        # self._all_close(vog, 0.)
+        vog = variance_of_gradients([self.model]*5, self.dataloader)
+        self.assertEqual(vog.shape, (self.n,))
+        self._all_close(vog, 0.)
         # variance should not depend on dataloader
         models = self._make_linear_models(6, scale=-1.5)
         vog = torch.cat([variance_of_gradients(models, self.dataloader)])
@@ -122,6 +122,17 @@ class TestModel(unittest.TestCase):
         self._all_close(vog_1, vog_2)
         npt.assert_array_less(-1e-8, vog_1)
 
+    def _grad_flags_unaffected(self, apply_fn):
+        for weight_grad, bias_grad in product([False, True], [False, True]):
+            model = self._make_linear_models()
+            # use optimizer to set requires_grad_(True)
+            torch.optim.SGD(model.parameters(), lr=1)
+            model[1].weight.requires_grad_(weight_grad)
+            model[1].bias.requires_grad_(bias_grad)
+            apply_fn(model)
+            self.assertEqual(model[1].weight.requires_grad, weight_grad)
+            self.assertEqual(model[1].bias.requires_grad, bias_grad)
+
     def test_online_vog(self):
         models = self._make_linear_models(6, scale=-1.5)
         vog = variance_of_gradients(models, self.dataloader)
@@ -132,17 +143,28 @@ class TestModel(unittest.TestCase):
             online_vog = OnlineVarianceOfGradients.load(self.tmp_file)
         self._all_close(vog, online_vog.get())
         # check that requires_grad flags are not affected
-        # use optimizer to set requires_grad_(True)
-        torch.optim.SGD(chain(models[0].parameters(), models[1].parameters(), models[2].parameters()), lr=1)
-        models[0][1].bias.requires_grad_(False)
-        models[1][1].weight.requires_grad_(False)
-        variance_of_gradients(models[:3], [(self.data, self.labels)])
-        self.assertTrue(models[0][1].weight.requires_grad)
-        self.assertFalse(models[0][1].bias.requires_grad)
-        self.assertFalse(models[1][1].weight.requires_grad)
-        self.assertTrue(models[1][1].bias.requires_grad)
-        self.assertTrue(models[2][1].weight.requires_grad)
-        self.assertTrue(models[2][1].bias.requires_grad)
+        self._grad_flags_unaffected(
+            lambda m: variance_of_gradients([m, m], [(self.data, self.labels)]))
+
+    def test_gradient_norm(self):
+        # loss of 0 should give gradient norm of 0
+        self.model.eval()
+        est_labels = self.model(self.data).detach()
+        grand = gradient_norm(self.model, self.data, est_labels, loss_fn=nn.MSELoss())
+        self.assertTrue(torch.all(torch.less(torch.abs(grand), 1e-3)))
+        # check that functional gradient is same as computing each data point's gradient individually
+        grand = gradient_norm(self.model, self.data, self.labels)
+        grand_1 = functional_gradient_norm(self.model, self.data, self.labels)
+        self._all_close(grand, grand_1)
+        grand_2 = grand_score(self.model, self.dataloader)
+        self._all_close(grand, grand_2)
+        # check that requires_grad flags are not affected
+        self._grad_flags_unaffected(
+            lambda m: grand_score(m, [(self.data, self.labels)]))
+        # # check how long each method takes
+        # import timeit
+        # print(timeit.timeit(lambda: gradient_norm(self.model, self.data, self.labels), number=3))
+        # print(timeit.timeit(lambda: functional_gradient_norm(self.model, self.data, self.labels), number=3))
 
 
 if __name__ == '__main__':
