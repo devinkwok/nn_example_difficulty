@@ -3,8 +3,7 @@ from collections import defaultdict
 import numpy.testing as npt
 import torch
 
-from open_lth.models import cifar_resnet
-from open_lth.models.initializers import kaiming_normal
+from difficulty.test.utils import Model
 from difficulty.model.eval import evaluate_model, evaluate_intermediates
 from difficulty.metrics import *
 
@@ -18,7 +17,7 @@ class TestModel(unittest.TestCase):
         self.labels = torch.cat([torch.zeros(self.n // 2), torch.ones(self.n - self.n // 2)])
         dataset = torch.utils.data.TensorDataset(self.data, self.labels)
         self.dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, drop_last=False)
-        self.model = cifar_resnet.Model.get_model_from_name("cifar_resnet_14_8", initializer=kaiming_normal)
+        self.model = Model.get_model_from_name("cifar_resnet_14_8")
 
     def _combine_batches(self, generator):
         inputs, outputs, labels = [], [], []

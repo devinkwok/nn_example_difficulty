@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from difficulty.metrics import accumulator
-from difficulty.test.test_metrics import ArgsUnchanged
+from difficulty.test.utils import ArgsUnchanged
 
 
 class TestMetrics(unittest.TestCase):

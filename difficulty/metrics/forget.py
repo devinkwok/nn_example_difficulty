@@ -6,7 +6,11 @@ as well as additional similar metrics.
 
 Following functions assume dimensions (..., T, N) where T is steps (iterations)
 """
+from pathlib import Path
+from typing import Dict
 import torch
+
+from difficulty.metrics.accumulator import Accumulator
 
 
 __all__ = [
@@ -25,35 +29,34 @@ __all__ = [
 ]
 
 
-def _change_events(zero_one_accuracy: torch.Tensor, is_forward: bool, is_falling: bool) -> torch.Tensor:
-    single_iteration = zero_one_accuracy[..., 0:1, :]
+def _change_events(zero_one_accuracy: torch.Tensor, is_increasing: bool, find_falling: bool, dim: int=-2) -> torch.Tensor:
+    single_iteration = torch.index_select(zero_one_accuracy, dim=dim, index=torch.tensor([0]))
     zeros = torch.zeros_like(single_iteration)
     ones = torch.ones_like(single_iteration)
-    start = zeros if is_forward else ones
-    end = ones if is_forward else zeros
-    accuracies = torch.concatenate([start, zero_one_accuracy, end], dim=-2)
-    prev = accuracies[..., :-1, :]
-    next = accuracies[..., 1:, :]
-    if is_falling:  # events transitioning from 1 to 0
+    start = zeros if is_increasing else ones
+    end = ones if is_increasing else zeros
+    prev = torch.cat([start, zero_one_accuracy], dim=dim)
+    next = torch.cat([zero_one_accuracy, end], dim=dim)
+    if find_falling:  # events transitioning from 1 to 0
         return torch.logical_and(prev, torch.logical_not(next))
     else:  # 0 to 1 (always guaranteed to occur at least once)
         return torch.logical_and(torch.logical_not(prev), next)
 
 
 def forgetting_events(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
-    return _change_events(zero_one_accuracy, is_forward=True, is_falling=True)
+    return _change_events(zero_one_accuracy, is_increasing=True, find_falling=True)
 
 
 def learning_events(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
-    return _change_events(zero_one_accuracy, is_forward=True, is_falling=False)
+    return _change_events(zero_one_accuracy, is_increasing=True, find_falling=False)
 
 
 def perturb_forgetting_events(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
-    return _change_events(zero_one_accuracy, is_forward=False, is_falling=True)
+    return _change_events(zero_one_accuracy, is_increasing=False, find_falling=True)
 
 
 def perturb_learning_events(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
-    return _change_events(zero_one_accuracy, is_forward=False, is_falling=False)
+    return _change_events(zero_one_accuracy, is_increasing=False, find_falling=False)
 
 
 def count_events(events: torch.Tensor) -> torch.Tensor:
@@ -64,7 +67,7 @@ def first_event_time(events: torch.Tensor) -> torch.Tensor:
     # force match at T if there are no matches
     guaranteed_event = torch.ones_like(events[..., 0:1, :])
     # make numeric to allow use of argmax
-    events_plus_extra = 1*torch.concatenate([events, guaranteed_event], dim=-2)
+    events_plus_extra = 1*torch.cat([events, guaranteed_event], dim=-2)
     # from torch.argmax: In case of multiple occurrences of the maximum values
     # the indices corresponding to the first occurrence are returned.
     first_event = torch.argmax(events_plus_extra, dim=-2)

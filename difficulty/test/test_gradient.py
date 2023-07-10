@@ -7,8 +7,7 @@ import numpy.testing as npt
 import torch
 import torch.nn as nn
 
-from open_lth.models import cifar_resnet
-from open_lth.models.initializers import kaiming_normal
+from difficulty.test.utils import Model
 from difficulty.metrics import *
 
 
@@ -23,7 +22,7 @@ class TestModel(unittest.TestCase):
                                  torch.ones(self.n - self.n // 2)]).to(dtype=torch.long)
         dataset = torch.utils.data.TensorDataset(self.data, self.labels)
         self.dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, drop_last=False)
-        self.model = cifar_resnet.Model.get_model_from_name("cifar_resnet_14_8", initializer=kaiming_normal)
+        self.model = Model.get_model_from_name("cifar_resnet_14_8")
         self.n_inputs = torch.prod(torch.tensor(self.data.shape[1:]))
         self.linear = self._make_linear_models(n_inputs=self.n_inputs)
         self.tmp_file = Path("difficulty/test/tmp_test_gradient_save_file.npz")
