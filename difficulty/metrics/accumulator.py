@@ -1,7 +1,7 @@
 from abc import ABC
 from pathlib import Path
 from collections import defaultdict
-from typing import Dict
+from typing import Dict, List
 
 import torch
 import numpy as np
@@ -63,7 +63,7 @@ class Accumulator(ABC):
 
     def _add(self, x: torch.Tensor, **metadata):
         for k, v in metadata.items():
-            self.metadata[k].append(v)
+            self.metadata_lists[k].append(v)
         x = x.to(dtype=self.str_to_torch_dtype(self.metadata["dtype"]))
         return x
 
@@ -139,3 +139,35 @@ class OnlineVariance(Accumulator):
         if self.sum_sq is None:
             return None
         return self.sum_sq / (self.mean.n - 1)
+
+
+class BatchAccumulator(Accumulator):
+    # assumes batches are indexed over dim=-1
+    def __init__(self,
+        n_items: int,  # must specify n_items at first init
+        n=None,
+        device="cpu",
+        metadata_lists: Dict[str, list]={},
+        **metadata,
+    ):
+        super().__init__(n_items=n_items, dtype=torch.long, device=device, metadata_lists=metadata_lists, **metadata)
+        self.n = torch.zeros(n_items, dtype=torch.long) if n is None else n
+
+    def save(self, file: Path, **data):
+        super().save(file, n=self.n, **data)
+
+    def add(self, *tensors: List[torch.Tensor], minibatch_idx: torch.Tensor=None, **metadata):
+        super()._add(tensors[0], **metadata)
+        self.n[minibatch_idx] += 1
+        return self.select_subset(*tensors, minibatch_idx=minibatch_idx)
+
+    def select_subset(self, *tensors, minibatch_idx=None):
+        if minibatch_idx is None:
+            minibatch_idx = torch.arange(len(self.n))
+        output = tuple(x.index_select(dim=-1, index=minibatch_idx) for x in tensors)
+        return output[0] if len(tensors) == 1 else output
+
+    def update_subset_(self, target: torch.Tensor, source: torch.Tensor, minibatch_idx: torch.Tensor=None):
+        if minibatch_idx is None:
+            minibatch_idx = torch.arange(len(self.n))
+        target[..., minibatch_idx] = source  # in place operation

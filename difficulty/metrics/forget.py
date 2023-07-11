@@ -10,18 +10,17 @@ from pathlib import Path
 from typing import Dict
 import torch
 
-from difficulty.metrics.accumulator import Accumulator
+from difficulty.metrics.accumulator import BatchAccumulator
 
 
 __all__ = [
-    "forgetting_events",
-    "learning_events",
     "first_learn",
     "first_unforgettable",
     "first_forget",
     "first_unlearnable",
     "count_forgetting",
     "is_unforgettable",
+    "OnlineCountForgetting",
 ]
 
 
@@ -43,7 +42,7 @@ def _change_events(zero_one_accuracy: torch.Tensor, falling_edge: bool, dim: int
     return torch.index_select(events, dim=dim, index=idx)
 
 
-def forgetting_events(zero_one_accuracy: torch.Tensor, start_at_zero: bool=True, dim: int=-2) -> torch.Tensor:
+def _forgetting_events(zero_one_accuracy: torch.Tensor, start_at_zero: bool=True, dim: int=-2) -> torch.Tensor:
     """Forgetting events, defined as falling edges for zero-one-accuracy (i.e. a transition from 1 to 0).
 
     Args:
@@ -60,7 +59,7 @@ def forgetting_events(zero_one_accuracy: torch.Tensor, start_at_zero: bool=True,
     return _change_events(acc, falling_edge=True, dim=dim)
 
 
-def learning_events(zero_one_accuracy: torch.Tensor, start_at_zero: bool=True, dim: int=-2) -> torch.Tensor:
+def _learning_events(zero_one_accuracy: torch.Tensor, start_at_zero: bool=True, dim: int=-2) -> torch.Tensor:
     """Learning events, defined as rising edges for zero-one-accuracy (i.e. a transition from 0 to 1).
 
     Args:
@@ -106,7 +105,7 @@ def first_learn(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor:
         torch.Tensor: iteration at which an example is first learned,
             from 0 to T inclusive where T means never learned
     """
-    return _first_event_time(learning_events(
+    return _first_event_time(_learning_events(
         zero_one_accuracy, start_at_zero=True, dim=dim), dim=dim)
 
 
@@ -127,7 +126,7 @@ def first_unforgettable(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor
             from 0 to T inclusive where 0 means always learned and T means never learned
     """
     guarantee_learn_at_end = _concat_iter(zero_one_accuracy, True, dim=dim, at_end=True)
-    return _last_event_time(learning_events(guarantee_learn_at_end, start_at_zero=True, dim=dim), dim=dim)
+    return _last_event_time(_learning_events(guarantee_learn_at_end, start_at_zero=True, dim=dim), dim=dim)
 
 
 def first_forget(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor:
@@ -141,7 +140,7 @@ def first_forget(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor:
         torch.Tensor: iteration at which an example is first forgotten,
             from 0 to T inclusive where T means never learned
     """
-    return _first_event_time(forgetting_events(zero_one_accuracy, start_at_zero=False, dim=dim), dim=dim)
+    return _first_event_time(_forgetting_events(zero_one_accuracy, start_at_zero=False, dim=dim), dim=dim)
 
 
 def first_unlearnable(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor:
@@ -155,7 +154,7 @@ def first_unlearnable(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor:
         torch.Tensor: step after which classification is always wrong
     """
     guarantee_forget_at_end = _concat_iter(zero_one_accuracy, False, dim=dim, at_end=True)
-    return _last_event_time(forgetting_events(guarantee_forget_at_end, start_at_zero=False, dim=dim), dim=dim)
+    return _last_event_time(_forgetting_events(guarantee_forget_at_end, start_at_zero=False, dim=dim), dim=dim)
 
 
 def count_forgetting(zero_one_accuracy: torch.Tensor, start_at_zero=True, dim: int=-2) -> torch.Tensor:
@@ -171,7 +170,7 @@ def count_forgetting(zero_one_accuracy: torch.Tensor, start_at_zero=True, dim: i
     Returns:
         torch.Tensor: number of forgetting events (..., N)
     """
-    return torch.count_nonzero(forgetting_events(zero_one_accuracy, start_at_zero=start_at_zero, dim=dim), dim=dim)
+    return torch.count_nonzero(_forgetting_events(zero_one_accuracy, start_at_zero=start_at_zero, dim=dim), dim=dim)
 
 
 def is_unforgettable(zero_one_accuracy: torch.Tensor, start_at_zero=True, dim: int=-2) -> torch.Tensor:
@@ -190,3 +189,45 @@ def is_unforgettable(zero_one_accuracy: torch.Tensor, start_at_zero=True, dim: i
     unforgotten = count_forgetting(zero_one_accuracy, start_at_zero=start_at_zero, dim=dim) == 0
     is_learned = first_learn(zero_one_accuracy, dim=dim) < zero_one_accuracy.shape[dim]
     return torch.logical_and(unforgotten, is_learned)
+
+
+#TODO OnlineFirstLearn
+
+
+#TODO OnlineFirstUnforgettable
+
+
+#TODO OnlineFirstForget
+
+
+#TODO OnlineFirstUnlearnable
+
+
+class OnlineCountForgetting(BatchAccumulator):
+
+    def __init__(self, n_items: int=None, start_at_zero: bool=True, n=None, n_forget=None, prev_acc=None, device="cpu", metadata_lists: Dict[str, list]={}, **metadata):
+        super().__init__(n_items, n=n, device=device, metadata_lists=metadata_lists, start_at_zero=start_at_zero, **metadata)
+        self.prev_acc = prev_acc
+        self.n_forget = n_forget
+
+    def save(self, file: Path):
+        super().save(file, prev_acc=self.prev_acc, n_forget=self.n_forget)
+
+    def add(self, zero_one_accuracy: torch.Tensor, minibatch_idx: torch.Tensor=None, **metadata):
+        if self.prev_acc is None:
+            # fix shape to have n_items
+            shape = list(zero_one_accuracy.shape)
+            shape[-1] = self.metadata["n_items"]
+            self.prev_acc = torch.full(shape, 0 if self.metadata["start_at_zero"] else 1, dtype=torch.bool)
+            self.n_forget = torch.zeros(shape, dtype=torch.long)
+        n_forget, prev_acc = super().add(self.n_forget, self.prev_acc, minibatch_idx=minibatch_idx, **metadata)
+        acc = torch.stack([prev_acc, zero_one_accuracy], dim=-2)
+        n_forget += count_forgetting(acc, start_at_zero=True, dim=-2)
+        self.update_subset_(self.n_forget, n_forget, minibatch_idx=minibatch_idx)
+        self.update_subset_(self.prev_acc, zero_one_accuracy, minibatch_idx=minibatch_idx)
+
+    def get(self) -> torch.Tensor:
+        return self.n_forget
+
+
+#TODO OnlineIsUnforgettable
