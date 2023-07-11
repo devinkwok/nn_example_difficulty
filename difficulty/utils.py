@@ -22,22 +22,21 @@ def pointwise_metrics(eval_logits: np.ndarray, labels: np.ndarray) -> np.ndarray
 
 def train_forget_metrics(eval_logits: np.ndarray, labels: np.ndarray) -> np.ndarray:
     acc = zero_one_accuracy(eval_logits, labels)
-    forget = forgetting_events(acc)
     return {
-        "forget": count_forgetting(forget),
-        "first-learned": first_learn(forget),
-        "first-unforgettable": first_unforgettable(forget),
-        "unforgettable": is_unforgettable(forget),
+        "forget": count_forgetting(acc),
+        "first-learned": first_learn(acc),
+        "first-unforgettable": first_unforgettable(acc),
+        "unforgettable": is_unforgettable(acc),
     }
 
 
 def perturb_forget_metrics(eval_logits: np.ndarray, labels: np.ndarray) -> np.ndarray:
     acc = zero_one_accuracy(eval_logits, labels)
-    forget = perturb_forgetting_events(acc)
     return {
-        "forget": count_forgetting(forget),
-        "first-forget": perturb_first_forget(forget),
-        "unforgettable": is_unforgettable(forget),
+        "forget": count_forgetting(acc),
+        "first-forget": first_forget(acc),
+        "first-unlearnable": first_unlearnable(acc),
+        "unforgettable": is_unforgettable(acc),
     }
 
 

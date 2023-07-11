@@ -16,120 +16,102 @@ from difficulty.metrics.accumulator import Accumulator
 __all__ = [
     "forgetting_events",
     "learning_events",
-    "perturb_forgetting_events",
-    "perturb_learning_events",
-    "count_events",
-    "first_event_time",
-    "last_event_time",
     "first_learn",
-    "is_unforgettable",
-    "count_forgetting",
     "first_unforgettable",
-    "perturb_first_forget",
+    "first_forget",
+    "first_unlearnable",
+    "count_forgetting",
+    "is_unforgettable",
 ]
 
 
-def _change_events(zero_one_accuracy: torch.Tensor, is_increasing: bool, find_falling: bool, dim: int=-2) -> torch.Tensor:
-    single_iteration = torch.index_select(zero_one_accuracy, dim=dim, index=torch.tensor([0]))
-    zeros = torch.zeros_like(single_iteration)
-    ones = torch.ones_like(single_iteration)
-    start = zeros if is_increasing else ones
-    end = ones if is_increasing else zeros
-    prev = torch.cat([start, zero_one_accuracy], dim=dim)
-    next = torch.cat([zero_one_accuracy, end], dim=dim)
-    if find_falling:  # events transitioning from 1 to 0
-        return torch.logical_and(prev, torch.logical_not(next))
+def _concat_iter(tensor: torch.Tensor, fill_value=0, dim: int=-2, at_end=False):
+    single = torch.index_select(tensor, dim=dim, index=torch.tensor([0]))
+    single = torch.full_like(single, fill_value)
+    combined = [tensor, single] if at_end else [single, tensor]
+    return torch.cat(combined, dim=dim)
+
+
+def _change_events(zero_one_accuracy: torch.Tensor, falling_edge: bool, dim: int=-2) -> torch.Tensor:
+    prev = torch.roll(zero_one_accuracy, 1, dims=dim)  # (0,1,2, ..., -1) -> (-1,0,1, ..., -2)
+    if falling_edge:  # events transitioning from 1 to 0
+        events = torch.logical_and(prev, torch.logical_not(zero_one_accuracy))
     else:  # 0 to 1 (always guaranteed to occur at least once)
-        return torch.logical_and(torch.logical_not(prev), next)
+        events = torch.logical_and(torch.logical_not(prev), zero_one_accuracy)
+    # exclude first event, which is the transition from -1 to 0 in zero_one_accuracy
+    idx = torch.arange(1, zero_one_accuracy.shape[dim])
+    return torch.index_select(events, dim=dim, index=idx)
 
 
-def forgetting_events(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
-    return _change_events(zero_one_accuracy, is_increasing=True, find_falling=True)
+def forgetting_events(zero_one_accuracy: torch.Tensor, start_at_zero: bool=True, dim: int=-2) -> torch.Tensor:
+    """Forgetting events, defined as falling edges for zero-one-accuracy (i.e. a transition from 1 to 0).
+
+    Args:
+        zero_one_accuracy (torch.Tensor): output of pointwise.zero_one_accuracy(),
+            bool tensor of shape (...,T, N) where T is the step
+        start_at_zero (bool, optional): whether to assume events begin at 0 (untrained) or 1 (trained).
+            In particular, if False it is possible to have a forgetting event at the first timestep
+            (e.g. if all T have zero accuracy, there is a forgetting event at T=0). Defaults to True.
+
+    Returns:
+        torch.Tensor: boolean tensor of shape (..., T, N) where True indicates a forgetting event.
+    """
+    acc = _concat_iter(zero_one_accuracy, False if start_at_zero else True, dim=dim)
+    return _change_events(acc, falling_edge=True, dim=dim)
 
 
-def learning_events(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
-    return _change_events(zero_one_accuracy, is_increasing=True, find_falling=False)
+def learning_events(zero_one_accuracy: torch.Tensor, start_at_zero: bool=True, dim: int=-2) -> torch.Tensor:
+    """Learning events, defined as rising edges for zero-one-accuracy (i.e. a transition from 0 to 1).
+
+    Args:
+        zero_one_accuracy (torch.Tensor): output of pointwise.zero_one_accuracy(),
+            bool tensor of shape (...,T, N) where T is the step
+        start_at_zero (bool, optional): whether to assume events begin at 0 (untrained) or 1 (trained).
+            In particular, if True it is possible to have a learning event at the first timestep
+            (e.g. if all T have one accuracy, there is a learning event at T=0). Defaults to True.
+
+    Returns:
+        torch.Tensor: boolean tensor of shape (..., T, N) where True indicates a forgetting event.
+    """
+    acc = _concat_iter(zero_one_accuracy, False if start_at_zero else True, dim=dim)
+    return _change_events(acc, falling_edge=False, dim=dim)
 
 
-def perturb_forgetting_events(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
-    return _change_events(zero_one_accuracy, is_increasing=False, find_falling=True)
-
-
-def perturb_learning_events(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
-    return _change_events(zero_one_accuracy, is_increasing=False, find_falling=False)
-
-
-def count_events(events: torch.Tensor) -> torch.Tensor:
-    return torch.count_nonzero(events, dim=-2)
-
-
-def first_event_time(events: torch.Tensor) -> torch.Tensor:
-    # force match at T if there are no matches
-    guaranteed_event = torch.ones_like(events[..., 0:1, :])
-    # make numeric to allow use of argmax
-    events_plus_extra = 1*torch.cat([events, guaranteed_event], dim=-2)
+def _first_event_time(events: torch.Tensor, dim=-2) -> torch.Tensor:
+    # force match at 0 or T if there are no matches
+    # multiply by 1 to make numeric to allow use of argmax
+    events_plus_end = 1*_concat_iter(events, True, dim=dim, at_end=True)
     # from torch.argmax: In case of multiple occurrences of the maximum values
     # the indices corresponding to the first occurrence are returned.
-    first_event = torch.argmax(events_plus_extra, dim=-2)
+    first_event = torch.argmax(events_plus_end, dim=dim)
     return first_event
 
 
-def last_event_time(events: torch.Tensor) -> torch.Tensor:
-    reversed = torch.flip(events, dims=[-2])
-    backward_idx = first_event_time(reversed)
-    last_event = events.shape[-2] - 1 - backward_idx
-    return last_event
+def _last_event_time(events: torch.Tensor, dim=-2) -> torch.Tensor:
+    reversed = torch.flip(events, dims=[dim])
+    backward_idx = _first_event_time(reversed, dim)
+    # _first_event_time returns events.shape[dim] if no events
+    # reversing the idx makes this become -1, so take modulo to map back to events.shape[dim]
+    return (events.shape[dim] - 1 - backward_idx) % (events.shape[dim] + 1)
 
 
-def first_learn(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
-    """Equivalent to first_event_time(learning_events(zero_one_accuracy))
-
-    Args:
-        zero_one_accuracy (torch.Tensor): output of pointwise.zero_one_accuracy(),
-            bool tensor of shape (...,T+1, N) where T is the step
-
-    Returns:
-        torch.Tensor: iteration at which an example is first learned, from 0 to T inclusive
-            0 means always learned, T means never learned
-    """
-    events = learning_events(zero_one_accuracy)
-    return first_event_time(events)
-
-
-def is_unforgettable(learning_events: torch.Tensor, forgetting_events: torch.Tensor) -> torch.Tensor:
-    """
-    Args:
-        learning_events (torch.Tensor): output of learning_events() or perturb_learning_events()
-            with shape (...,T+1, N) where T is the step
-        forgetting_events (torch.Tensor): output of forgetting_events() or perturb_forgetting_events()
-            with shape (...,T+1, N) where T is the step
-
-    Returns:
-        torch.Tensor: 0 if example is forgotten, 1 if example is not forgotten (..., N)
-    """
-    t = learning_events.shape[-2] - 1
-    learn = first_learn(learning_events)
-    forget = count_forgetting(forgetting_events)
-    unforgettable = torch.logical_and(learn < t, forget == 0)
-    return unforgettable
-
-
-def count_forgetting(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
-    """Equivalent to count_events(forgetting_events(zero_one_accuracy))
+def first_learn(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor:
+    """Equivalent to _first_event_time(learning_events(zero_one_accuracy, start_at_zero=True, dim=dim), dim=dim)
 
     Args:
         zero_one_accuracy (torch.Tensor): output of pointwise.zero_one_accuracy(),
-            bool tensor of shape (...,T+1, N) where T is the step
+            bool tensor of shape (...,T, N) where T is the step
 
     Returns:
-        torch.Tensor: number of forgetting events
+        torch.Tensor: iteration at which an example is first learned,
+            from 0 to T inclusive where T means never learned
     """
-    events = forgetting_events(zero_one_accuracy)
-    return count_events(events)
+    return _first_event_time(learning_events(
+        zero_one_accuracy, start_at_zero=True, dim=dim), dim=dim)
 
 
-def first_unforgettable(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
-    """Equivalent to last_event_time(learning_events(zero_one_accuracy))
+def first_unforgettable(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor:
+    """Equivalent to _last_event_time(forgetting_events(_concat_iter(zero_one_accuracy, True, dim=dim, at_end=True), start_at_zero=True, dim=dim), dim=dim)
 
     Also called iteration learned in
     Baldock, R., Maennel, H., and Neyshabur, B. (2021).
@@ -141,12 +123,70 @@ def first_unforgettable(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
             bool tensor of shape (...,T+1, N) where T is the step
 
     Returns:
-        torch.Tensor: step after which classification is always correct
+        torch.Tensor: step after which classification is always correct,
+            from 0 to T inclusive where 0 means always learned and T means never learned
     """
-    events = learning_events(zero_one_accuracy)
-    return last_event_time(events)
+    guarantee_learn_at_end = _concat_iter(zero_one_accuracy, True, dim=dim, at_end=True)
+    return _last_event_time(learning_events(guarantee_learn_at_end, start_at_zero=True, dim=dim), dim=dim)
 
 
-def perturb_first_forget(zero_one_accuracy: torch.Tensor) -> torch.Tensor:
-    events = perturb_forgetting_events(zero_one_accuracy)
-    return first_event_time(events)
+def first_forget(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor:
+    """Equivalent to _first_event_time(forgetting_events(zero_one_accuracy, start_at_zero=False, dim=dim), dim=dim)
+
+    Args:
+        zero_one_accuracy (torch.Tensor): output of pointwise.zero_one_accuracy(),
+            bool tensor of shape (...,T, N) where T is the step
+
+    Returns:
+        torch.Tensor: iteration at which an example is first forgotten,
+            from 0 to T inclusive where T means never learned
+    """
+    return _first_event_time(forgetting_events(zero_one_accuracy, start_at_zero=False, dim=dim), dim=dim)
+
+
+def first_unlearnable(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor:
+    """Equivalent to _last_event_time(forgetting_events(_concat_iter(zero_one_accuracy, False, dim=dim, at_end=True), start_at_zero=False, dim=dim), dim=dim)
+
+    Args:
+        zero_one_accuracy (torch.Tensor): output of pointwise.zero_one_accuracy(),
+            bool tensor of shape (...,T, N) where T is the step
+
+    Returns:
+        torch.Tensor: step after which classification is always wrong
+    """
+    guarantee_forget_at_end = _concat_iter(zero_one_accuracy, False, dim=dim, at_end=True)
+    return _last_event_time(forgetting_events(guarantee_forget_at_end, start_at_zero=False, dim=dim), dim=dim)
+
+
+def count_forgetting(zero_one_accuracy: torch.Tensor, start_at_zero=True, dim: int=-2) -> torch.Tensor:
+    """Equivalent to torch.count_nonzero(forgetting_events(zero_one_accuracy, start_at_zero=start_at_zero, dim=dim), dim=dim)
+
+    Args:
+        zero_one_accuracy (torch.Tensor): output of pointwise.zero_one_accuracy(),
+            bool tensor of shape (...,T+1, N) where T is the step
+        start_at_zero (bool, optional): whether to assume events begin at 0 (untrained) or 1 (trained).
+            In particular, if False it is possible to have a forgetting event at the first timestep
+            (e.g. if all T have zero accuracy, there is a forgetting event at T=0). Defaults to True.
+
+    Returns:
+        torch.Tensor: number of forgetting events (..., N)
+    """
+    return torch.count_nonzero(forgetting_events(zero_one_accuracy, start_at_zero=start_at_zero, dim=dim), dim=dim)
+
+
+def is_unforgettable(zero_one_accuracy: torch.Tensor, start_at_zero=True, dim: int=-2) -> torch.Tensor:
+    """
+    An example is unforgettable if it is 1) learned, and 2) never forgotten
+    Args:
+        zero_one_accuracy (torch.Tensor): output of pointwise.zero_one_accuracy(),
+            bool tensor of shape (...,T+1, N) where T is the step
+        start_at_zero (bool, optional): whether to assume events begin at 0 (untrained) or 1 (trained).
+            In particular, if False it is possible to have a forgetting event at the first timestep
+            (e.g. if all T have zero accuracy, there is a forgetting event at T=0). Defaults to True.
+
+    Returns:
+        torch.Tensor: 0 if example is forgotten, 1 if example is not forgotten (..., N)
+    """
+    unforgotten = count_forgetting(zero_one_accuracy, start_at_zero=start_at_zero, dim=dim) == 0
+    is_learned = first_learn(zero_one_accuracy, dim=dim) < zero_one_accuracy.shape[dim]
+    return torch.logical_and(unforgotten, is_learned)

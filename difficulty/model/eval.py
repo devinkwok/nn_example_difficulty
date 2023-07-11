@@ -62,12 +62,6 @@ class SaveIntermediateHook:
             self.intermediates[key] = value
 
 
-class IntermediateGradientHook:
-    pass  #TODO
-    # include inputs as gradients
-    # use functorch?
-
-
 def evaluate_intermediates(
         model,
         dataloader,
