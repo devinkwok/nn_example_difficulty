@@ -2,9 +2,11 @@ import os
 import torch
 import unittest
 from pathlib import Path
+import numpy.testing as npt
 
-from difficulty.metrics import accumulator
 from difficulty.test.utils import ArgsUnchanged
+from difficulty.metrics import *
+from difficulty.metrics.accumulator import BatchAccumulator
 
 
 class TestMetrics(unittest.TestCase):
@@ -64,7 +66,7 @@ class TestMetrics(unittest.TestCase):
         mean_fn = lambda x, dim: torch.mean(x.to(dtype=self.dtype), dim=dim)
         for msg, data in self.data.items():
             with self.subTest(msg, data=data[0, 0, 0]):
-                self._test_accumulator(accumulator.OnlineMean,
+                self._test_accumulator(OnlineMean,
                                        data,
                                        data.to(self.dtype),
                                        mean_fn)
@@ -73,10 +75,37 @@ class TestMetrics(unittest.TestCase):
         var_fn = lambda x, dim: torch.var(x.to(dtype=self.dtype), dim=dim)
         for msg, data in self.data.items():
             with self.subTest(msg, data=data[0, 0, 0]):
-                self._test_accumulator(accumulator.OnlineVariance,
+                self._test_accumulator(OnlineVariance,
                                        data,
                                        torch.full_like(data, torch.nan, dtype=self.dtype),
                                        var_fn)
+
+    def test_batch_accumulator(self):
+        n_batches = 3
+        for msg, data in self.data.items():
+            torch.moveaxis(data, 0, -1)  # batch accumulator works on last axis
+            # check that subset does not modify data if no minibatch supplied
+            obj = BatchAccumulator(data.shape[-1], dtype=data.dtype)
+            subset = obj.add(data)
+            npt.assert_array_equal(subset, data)
+            npt.assert_array_equal(obj.n, 1)
+            if data.shape[-1] < n_batches:
+                continue
+            idx = torch.randperm(data.shape[-1])
+            output = torch.zeros_like(data)
+            for i in range(1, 3):
+                for subset_idx in torch.split(idx, len(idx) // n_batches):
+                    # check that subset works
+                    sub_in, sub_out = obj.add(data, output, minibatch_idx=subset_idx)
+                    npt.assert_array_equal(sub_in, data[..., subset_idx])
+                    npt.assert_array_equal(sub_out, (i - 1) * data[..., subset_idx])
+                    # check that update works
+                    obj.update_subset_(output, sub_in + sub_out, subset_idx)
+                    npt.assert_array_equal(output[..., subset_idx], i * data[..., subset_idx])
+                    # check that n is updated correctly
+                    npt.assert_array_equal(obj.n[..., subset_idx], i + 1)
+                npt.assert_array_equal(output, i * data)
+                npt.assert_array_equal(obj.n, i + 1)
 
 
 if __name__ == '__main__':

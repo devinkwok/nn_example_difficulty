@@ -1,7 +1,7 @@
 from abc import ABC
 from pathlib import Path
 from collections import defaultdict
-from typing import Dict
+from typing import Dict, List
 
 import torch
 import numpy as np
@@ -49,6 +49,14 @@ class Accumulator(ABC):
                 data[k] = torch.tensor(v, dtype=dtype, device=str(metadata["device"]))
         return cls(**metadata, metadata_lists=lists, **data)
 
+    @property
+    def dtype(self):
+        return self.str_to_torch_dtype(self.metadata["dtype"])
+
+    @property
+    def device(self):
+        return str(self.metadata["device"])
+
     def save(self, file: Path, **data):
         # cannot have metadata that shares same keys as data, otherwise causes conflict when loading
         assert set(data.keys()).isdisjoint(set(self.metadata.keys()))
@@ -61,11 +69,11 @@ class Accumulator(ABC):
                 data_dict[k] = v.detach().cpu().numpy()
         np.savez(file, **data_dict, **metadata, **lists)
 
-    def _add(self, x: torch.Tensor, **metadata):
+    def _add(self, *tensors: torch.Tensor, **metadata):
         for k, v in metadata.items():
-            self.metadata[k].append(v)
-        x = x.to(dtype=self.str_to_torch_dtype(self.metadata["dtype"]))
-        return x
+            self.metadata_lists[k].append(v)
+        output = tuple(x.to(dtype=self.dtype) for x in tensors)
+        return output[0] if len(tensors) == 1 else output
 
     def add(self, x: torch.Tensor, dim=None, **metadata):
         """In place operation
@@ -139,3 +147,38 @@ class OnlineVariance(Accumulator):
         if self.sum_sq is None:
             return None
         return self.sum_sq / (self.mean.n - 1)
+
+
+class BatchAccumulator(Accumulator):
+    # assumes batches are indexed over dim=-1
+    def __init__(self,
+        n_items: int,  # must specify n_items at first init
+        n=None,
+        dtype=torch.float64,
+        device="cpu",
+        metadata_lists: Dict[str, list]={},
+        **metadata,
+    ):
+        super().__init__(n_items=n_items, dtype=dtype, device=device, metadata_lists=metadata_lists, **metadata)
+        self.n = torch.zeros(n_items, dtype=torch.long) if n is None else n
+
+    def save(self, file: Path, **data):
+        super().save(file, n=self.n, **data)
+
+    def add(self, *tensors: List[torch.Tensor], minibatch_idx: torch.Tensor=None, **metadata):
+        fixed_dtype = super()._add(*tensors, **metadata)
+        if len(tensors) == 1:  # super()._add() automatically unpacks singleton tuples, need to re-pack for select_subset()
+            fixed_dtype = (fixed_dtype,)
+        self.n[minibatch_idx] += 1
+        return self.select_subset(*fixed_dtype, minibatch_idx=minibatch_idx)
+
+    def select_subset(self, *tensors, minibatch_idx=None):
+        if minibatch_idx is None:
+            minibatch_idx = torch.arange(len(self.n))
+        output = tuple(x.index_select(dim=-1, index=minibatch_idx) for x in tensors)
+        return output[0] if len(tensors) == 1 else output
+
+    def update_subset_(self, target: torch.Tensor, source: torch.Tensor, minibatch_idx: torch.Tensor=None):
+        if minibatch_idx is None:
+            minibatch_idx = torch.arange(len(self.n))
+        target[..., minibatch_idx] = source  # in place operation

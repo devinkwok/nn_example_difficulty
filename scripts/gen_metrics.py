@@ -7,7 +7,7 @@ from collections import defaultdict
 
 from difficulty.model.eval import evaluate_model
 from difficulty.utils import pointwise_metrics, add_prefix, avg_metrics, last_metrics, train_forget_metrics, perturb_forget_metrics
-from difficulty.metrics import OnlineVariance, forgetting_events, zero_one_accuracy
+from difficulty.metrics import OnlineVariance
 
 import sys
 sys.path.append("open_lth")

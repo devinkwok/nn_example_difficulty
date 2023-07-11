@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 import numpy.testing as npt
 
 from difficulty.metrics import *
@@ -39,6 +40,7 @@ class TestMetrics(unittest.TestCase):
         self.zero_to_ones = torch.cat([self.zeros[..., 0:1, :], self.ones[..., 1:, :]], axis=-2)
         self.one_to_zeros = 1 - self.zero_to_ones
         self.checkerboard = torch.tensor([[1, 0, 1, 0, 1, 0, 1], [0, 1, 0, 1, 0, 1, 0]], dtype=bool)
+        self.tmp_file = Path("difficulty/test/tmp_test_forget_save_file.npz")
 
     def _common_tests(self, apply_fn, is_order_statistic=True):
         for acc in self.acc:
@@ -68,9 +70,9 @@ class TestMetrics(unittest.TestCase):
 
     def test_learning_events(self):
         self._common_tests(_learning_events, is_order_statistic=False)
+        # check that learning does not overlap with forgetting
         for acc in self.acc:
             with ArgsUnchanged(acc):
-                # check that learning does not overlap with forgetting
                 self.assertFalse(torch.any(torch.logical_and(
                     _learning_events(acc), _forgetting_events(acc))))
                 self.assertFalse(torch.any(torch.logical_and(
@@ -127,8 +129,7 @@ class TestMetrics(unittest.TestCase):
 
     def test_count_forgetting(self):
         self._common_tests(count_forgetting)
-        # check that |learning - forgetting| \leq 1
-        for acc in self.acc:
+        for acc in self.acc:  # check that |learning - forgetting| \leq 1
             count_learning = torch.count_nonzero(_learning_events(acc), dim=-2)
             npt.assert_array_less(torch.abs(count_learning - count_forgetting(acc)), 2)
         # check edge cases
@@ -148,3 +149,31 @@ class TestMetrics(unittest.TestCase):
         npt.assert_array_equal(is_unforgettable(self.one_to_zeros), 0)
         # checkerboard case
         npt.assert_array_equal(is_unforgettable(self.checkerboard, dim=-1), [0, 0])
+
+
+    def _test_online_forgetting(self, Class, functional):
+        # test without batches, assuming (T, ..., N)
+        for acc in self.acc:
+            obj = Class(acc.shape[-1])  # assumes last dim is batch dim
+            for step in acc:
+                obj.add(step)
+            npt.assert_array_equal(obj.get(), functional(acc, dim=0))
+        # test with batches, assuming (..., T, N)
+        for acc, batch_size in zip(self.acc, range(1, len(self.acc))):
+            obj = Class(acc.shape[-1])
+            for i in range(acc.shape[-2]):
+                step = acc[..., i, :]
+                batches = torch.split(torch.randperm(step.shape[-1]), batch_size)
+                for batch in batches:
+                    obj.add(step[..., batch], minibatch_idx=batch)
+                    obj.save(self.tmp_file)
+                    obj = obj.load(self.tmp_file)
+            npt.assert_array_equal(obj.get(), functional(acc, dim=-2))
+
+
+    def test_online_count_forgetting(self):
+        self._test_online_forgetting(OnlineCountForgetting, count_forgetting)
+
+
+if __name__ == '__main__':
+    unittest.main()
