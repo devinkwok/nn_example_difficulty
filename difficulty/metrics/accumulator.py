@@ -61,9 +61,10 @@ class Accumulator(ABC):
         # cannot have metadata that shares same keys as data, otherwise causes conflict when loading
         assert set(data.keys()).isdisjoint(set(self.metadata.keys()))
         # add prefixes so that metadata and data can be stored in same npz file
-        data_dict = {"data_" + k: v for k, v in data.items()}
-        metadata = {"meta_" + k: v for k, v in self.metadata.items()}
-        lists = {"list_" + k: v for k, v in self.metadata_lists.items()}
+        # omit any None values, as None requires allow_pickle=True to load
+        data_dict = {"data_" + k: v for k, v in data.items() if v is not None}
+        metadata = {"meta_" + k: v for k, v in self.metadata.items() if v is not None}
+        lists = {"list_" + k: v for k, v in self.metadata_lists.items() if v is not None}
         for k, v in data_dict.items():
             if isinstance(v, torch.Tensor):
                 data_dict[k] = v.detach().cpu().numpy()

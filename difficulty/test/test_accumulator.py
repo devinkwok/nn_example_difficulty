@@ -34,9 +34,11 @@ class TestMetrics(unittest.TestCase):
         torch.testing.assert_allclose(x, y, rtol=rtol, atol=atol, equal_nan=True)
 
     def _test_accumulator(self, AccumulateClass, data, identity_value, ref_fn):
-        # identity AxBxC
+        # identity AxBxC, also check save/load for empty obj
         with ArgsUnchanged(data):
             obj = AccumulateClass()
+            obj.save(self.tmp_file)
+            obj = AccumulateClass.load(self.tmp_file)
             obj.add(data)
             self.assert_tensor_equal(obj.get(), identity_value)
         # compute over A elements of size BxC
