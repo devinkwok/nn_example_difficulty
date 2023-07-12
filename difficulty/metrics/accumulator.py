@@ -182,5 +182,6 @@ class BatchAccumulator(Accumulator):
 
     def update_subset_(self, target: torch.Tensor, source: torch.Tensor, minibatch_idx: torch.Tensor=None):
         if minibatch_idx is None:
-            minibatch_idx = torch.arange(len(self.n))
-        target[..., minibatch_idx] = source  # in place operation
+            target = source.clone()
+        else:
+            target[..., minibatch_idx] = source.clone()  # in place operation
