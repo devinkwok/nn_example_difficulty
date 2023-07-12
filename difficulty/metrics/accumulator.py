@@ -161,7 +161,7 @@ class BatchAccumulator(Accumulator):
         **metadata,
     ):
         super().__init__(n_items=n_items, dtype=dtype, device=device, metadata_lists=metadata_lists, **metadata)
-        self.n = torch.zeros(n_items, dtype=torch.long) if n is None else n
+        self.n = torch.zeros(n_items, dtype=torch.long, device=device) if n is None else n
 
     def save(self, file: Path, **data):
         super().save(file, n=self.n, **data)

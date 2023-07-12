@@ -25,7 +25,7 @@ __all__ = [
 
 
 def _concat_iter(tensor: torch.Tensor, fill_value=0, dim: int=-2, at_end=False):
-    single = torch.index_select(tensor, dim=dim, index=torch.tensor([0]))
+    single = torch.index_select(tensor, dim=dim, index=torch.tensor([0], dtype=torch.long, device=tensor.device))
     single = torch.full_like(single, fill_value)
     combined = [tensor, single] if at_end else [single, tensor]
     return torch.cat(combined, dim=dim)
@@ -38,7 +38,7 @@ def _change_events(zero_one_accuracy: torch.Tensor, falling_edge: bool, dim: int
     else:  # 0 to 1 (always guaranteed to occur at least once)
         events = torch.logical_and(torch.logical_not(prev), zero_one_accuracy)
     # exclude first event, which is the transition from -1 to 0 in zero_one_accuracy
-    idx = torch.arange(1, zero_one_accuracy.shape[dim])
+    idx = torch.arange(1, zero_one_accuracy.shape[dim], device=zero_one_accuracy.device)
     return torch.index_select(events, dim=dim, index=idx)
 
 
