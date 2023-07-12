@@ -175,8 +175,9 @@ class BatchAccumulator(Accumulator):
 
     def select_subset(self, *tensors, minibatch_idx=None):
         if minibatch_idx is None:
-            minibatch_idx = torch.arange(len(self.n))
-        output = tuple(x.index_select(dim=-1, index=minibatch_idx) for x in tensors)
+            output = tensors
+        else:
+            output = tuple(x.index_select(dim=-1, index=minibatch_idx) for x in tensors)
         return output[0] if len(tensors) == 1 else output
 
     def update_subset_(self, target: torch.Tensor, source: torch.Tensor, minibatch_idx: torch.Tensor=None):
