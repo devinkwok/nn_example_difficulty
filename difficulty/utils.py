@@ -14,7 +14,7 @@ def pointwise_metrics(eval_logits: np.ndarray, labels: np.ndarray) -> np.ndarray
         "acc": zero_one_accuracy(eval_logits, labels),
         "ent": entropy(eval_logits, labels),
         "conf": class_confidence(prob, labels),
-        "max-conf": max_confidence(prob),
+        "maxconf": max_confidence(prob),
         "margin": margin(prob, labels),
         "el2n": error_l2_norm(prob, labels),
     }
