@@ -151,7 +151,10 @@ class OnlineVariance(Accumulator):
 
 
 class BatchAccumulator(Accumulator):
-    # assumes batches are indexed over dim=-1
+    """
+    Assumes batches are indexed over dim=-1
+    Note: select_subset() clones tensors, so may not be differentiable
+    """
     def __init__(self,
         n_items: int,  # must specify n_items at first init
         n=None,
@@ -175,13 +178,11 @@ class BatchAccumulator(Accumulator):
 
     def select_subset(self, *tensors, minibatch_idx=None):
         if minibatch_idx is None:
-            output = tensors
-        else:
-            output = tuple(x.index_select(dim=-1, index=minibatch_idx) for x in tensors)
+            minibatch_idx = torch.arange(len(self.n), device=self.device)
+        output = tuple(x.index_select(dim=-1, index=minibatch_idx) for x in tensors)
         return output[0] if len(tensors) == 1 else output
 
     def update_subset_(self, target: torch.Tensor, source: torch.Tensor, minibatch_idx: torch.Tensor=None):
         if minibatch_idx is None:
-            target = source.clone()
-        else:
-            target[..., minibatch_idx] = source.clone()  # in place operation
+            minibatch_idx = torch.arange(len(self.n), device=self.device)
+        target[..., minibatch_idx] = source  # in place operation
