@@ -1,50 +1,21 @@
 import unittest
-from pathlib import Path
+from functools import partial
 import numpy.testing as npt
 
 from difficulty.metrics import *
 from difficulty.metrics.forget import _forgetting_events, _learning_events
-from difficulty.test.utils import ArgsUnchanged
+from difficulty.test.base import BaseTest
 
 
-class TestMetrics(unittest.TestCase):
+class TestMetrics(BaseTest):
 
     def setUp(self):
-        N = 20
-        C = 10
-        I = 15
-        S = 5
-        R = 3
-        self.n_examples = N
-        self.n_class = C
-        self.n_steps = I
-        self.logits = [
-            torch.randn(I, N, C),
-            torch.randn(R, I, N, C),
-            torch.randn(R, I, S, N, C),
-        ]
-        self.labels = [
-            torch.randint(0, C, (I, N)),
-            torch.randint(0, C, (R, I, N)),
-            torch.randint(0, C, (R, I, S, N)),
-        ]
-        self.zero_labels = [
-            torch.zeros([I, N], dtype=int),
-            torch.zeros([R, I, N], dtype=int),
-            torch.zeros([R, I, S, N], dtype=int),
-        ]
-        self.acc = [zero_one_accuracy(x, y) for x, y in zip(self.logits, self.labels)]
-
-        self.zeros = torch.zeros([I, N])
-        self.ones = torch.ones([I, N])
-        self.zero_to_ones = torch.cat([self.zeros[..., 0:1, :], self.ones[..., 1:, :]], axis=-2)
-        self.one_to_zeros = 1 - self.zero_to_ones
+        super().setUp()
         self.checkerboard = torch.tensor([[1, 0, 1, 0, 1, 0, 1], [0, 1, 0, 1, 0, 1, 0]], dtype=bool)
-        self.tmp_file = Path("difficulty/test/TEMP_TEST_DATA/forget_save_file.npz")
 
     def _common_tests(self, apply_fn, is_order_statistic=True):
         for acc in self.acc:
-            with ArgsUnchanged(acc):
+            with self.ArgsUnchanged(acc):
                 x = apply_fn(acc)
             if is_order_statistic:
                 self.assertEqual(x.shape, acc.shape[:-2] + acc.shape[-1:])
@@ -72,7 +43,7 @@ class TestMetrics(unittest.TestCase):
         self._common_tests(_learning_events, is_order_statistic=False)
         # check that learning does not overlap with forgetting
         for acc in self.acc:
-            with ArgsUnchanged(acc):
+            with self.ArgsUnchanged(acc):
                 self.assertFalse(torch.any(torch.logical_and(
                     _learning_events(acc), _forgetting_events(acc))))
                 self.assertFalse(torch.any(torch.logical_and(
@@ -168,6 +139,8 @@ class TestMetrics(unittest.TestCase):
                     obj.save(self.tmp_file)
                     obj = obj.load(self.tmp_file)
             npt.assert_array_equal(obj.get(), functional(acc, dim=-2))
+        # check that metadata is preserved in save/load
+        self.check_accumulator_metadata(partial(Class, acc.shape[-1]), acc)
 
     def test_online_count_forgetting(self):
         self._test_online_forgetting(OnlineCountForgetting, count_forgetting)
