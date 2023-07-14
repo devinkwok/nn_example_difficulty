@@ -40,7 +40,7 @@ class TestMetrics(unittest.TestCase):
         self.zero_to_ones = torch.cat([self.zeros[..., 0:1, :], self.ones[..., 1:, :]], axis=-2)
         self.one_to_zeros = 1 - self.zero_to_ones
         self.checkerboard = torch.tensor([[1, 0, 1, 0, 1, 0, 1], [0, 1, 0, 1, 0, 1, 0]], dtype=bool)
-        self.tmp_file = Path("difficulty/test/tmp_test_forget_save_file.npz")
+        self.tmp_file = Path("difficulty/test/TEMP_TEST_DATA/forget_save_file.npz")
 
     def _common_tests(self, apply_fn, is_order_statistic=True):
         for acc in self.acc:
@@ -150,7 +150,6 @@ class TestMetrics(unittest.TestCase):
         # checkerboard case
         npt.assert_array_equal(is_unforgettable(self.checkerboard, dim=-1), [0, 0])
 
-
     def _test_online_forgetting(self, Class, functional):
         # test without batches, assuming (T, ..., N)
         for acc in self.acc:
@@ -169,7 +168,6 @@ class TestMetrics(unittest.TestCase):
                     obj.save(self.tmp_file)
                     obj = obj.load(self.tmp_file)
             npt.assert_array_equal(obj.get(), functional(acc, dim=-2))
-
 
     def test_online_count_forgetting(self):
         self._test_online_forgetting(OnlineCountForgetting, count_forgetting)

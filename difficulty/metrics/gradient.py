@@ -54,6 +54,7 @@ def input_gradient(
         inputs: torch.Tensor,
         labels: torch.Tensor=None,
         loss_fn: callable=ClassOutput(),
+        return_output: bool=False,
 ):
     model.eval()
     # prevent input from belonging to multiple computation graphs
@@ -67,6 +68,8 @@ def input_gradient(
     gradient = inputs.grad.detach()
     for k, v in model.named_parameters():
         v.requires_grad_(grad_flags[k])  # reset grad flags
+    if return_output:
+        return gradient, y.detach()
     return gradient
 
 
@@ -75,9 +78,19 @@ def input_gradient_from_dataloader(
         dataloader: torch.utils.data.DataLoader,
         loss_fn: callable=ClassOutput(),
         device: str="cpu",
+        return_output: bool=False,
 ):
-    eval_fn = lambda m, d, l: input_gradient(m, d, l, loss_fn=loss_fn)
-    return torch.cat([*_eval_loop(model, dataloader, eval_fn, device)], dim=0)
+    eval_fn = lambda m, d, l: input_gradient(m, d, l, loss_fn=loss_fn, return_output=True)
+    iterator = _eval_loop(model, dataloader, eval_fn, device)
+    gradients, outputs = [], []
+    for gradient, output in iterator:
+        gradients.append(gradient)
+        if return_output:
+            outputs.append(output)
+    gradients = torch.cat(gradients, dim=0)
+    if return_output:
+        return gradients, torch.cat(outputs, dim=0)
+    return gradients
 
 
 def mean_color_channels(images: torch.Tensor, channel_dim=-3):
@@ -91,9 +104,9 @@ def mean_pixels(images: torch.Tensor):
 def variance_of_gradients(
         models: List[nn.Module],
         dataloader: torch.utils.data.DataLoader,
+        device="cpu",
         use_predicted_labels=False,
         channel_dim=-3,
-        device="cpu",
 ):
     """Agarwal, C., D'souza, D., & Hooker, S. (2022).
     Estimating example difficulty using variance of gradients.
@@ -106,16 +119,16 @@ def variance_of_gradients(
             corresponding to images with (C, H, W) shape
     """
     # average gradient over color channels
-    grad = []
+    gradients = []
     for model in models:
-        g = input_gradient_from_dataloader(model, dataloader, loss_fn=ClassOutput(
-            softmax=True, use_argmax_labels=use_predicted_labels), device=device)
-        grad.append(mean_color_channels(g, channel_dim=channel_dim))
+        grad = input_gradient_from_dataloader(model, dataloader, loss_fn=ClassOutput(
+            softmax=True, use_argmax_labels=use_predicted_labels), device=device, return_output=False)
+        gradients.append(mean_color_channels(grad, channel_dim=channel_dim))
     # compute variance over all timesteps
-    grad = torch.stack(grad, dim=0)
-    vog = torch.var(grad, dim=0)
+    gradients = torch.stack(gradients, dim=0)
     # average variance over all pixels
-    return mean_pixels(vog)
+    vog = mean_pixels(torch.var(gradients, dim=0))
+    return vog
 
 
 class OnlineVarianceOfGradients(Accumulator):
@@ -138,11 +151,28 @@ class OnlineVarianceOfGradients(Accumulator):
     def save(self, file: Path):
         super().save(file, n=self.var.mean.n, sum=self.var.mean.sum, sum_sq=self.var.sum_sq)
 
-    def add(self, model: nn.Module, dataloader: torch.utils.data.DataLoader, **metadata):
+    def add(self, model: nn.Module, dataloader: torch.utils.data.DataLoader, return_output: bool=False, **metadata):
+        """
+        Args:
+            model (nn.Module): _description_
+            dataloader (torch.utils.data.DataLoader): _description_
+            return_output (bool, optional): Return outputs, i.e. model(data),
+                to avoid having to call eval twice when generating other metrics. Defaults to False.
+
+        Returns:
+            _type_: _description_
+        """
         super()._add(torch.ones(1), **metadata)
-        g = input_gradient_from_dataloader(model, dataloader, loss_fn=self.loss_fn, device=str(self.metadata["device"]))
-        grad = mean_color_channels(g, channel_dim=int(self.metadata["channel_dim"]))
-        self.var.add(grad, dim=None)
+        grad = input_gradient_from_dataloader(
+            model, dataloader,
+            loss_fn=self.loss_fn, device=str(self.metadata["device"]),
+            return_output=return_output)
+        if return_output:
+            grad, out = grad
+        gradients = mean_color_channels(grad, channel_dim=int(self.metadata["channel_dim"]))
+        self.var.add(gradients, dim=None)
+        if return_output:
+            return self, out
         return self
 
     def get(self):
@@ -155,15 +185,27 @@ def functional_gradient_norm(
         inputs: torch.Tensor,
         labels: torch.Tensor=None,
         loss_fn: callable=nn.CrossEntropyLoss(reduction="none"),
+        return_output: bool=False,
 ):
     model.eval()
     func_model, params, buffers = make_functional_with_buffers(model)
-    model_loss = lambda p, b, x, y: loss_fn(func_model(p, b, x), y)
+
+    def model_loss(p, b, x, z):
+        y = func_model(p, b, x)
+        loss = loss_fn(y, z)
+        if return_output:
+            return loss, y
+        return loss
+
     n_examples = inputs.shape[0]
-    jacobian = jacrev(model_loss, argnums=0)(params, buffers, inputs, labels)
+    jacobian = jacrev(model_loss, argnums=0, has_aux=return_output)(params, buffers, inputs, labels)
+    if return_output:
+        jacobian, outputs = jacobian
     gradients = [x.detach().reshape(n_examples, -1) for x in jacobian]
     gradients = torch.cat(gradients, dim=-1)
     grad_norm = torch.linalg.vector_norm(gradients, dim=-1)
+    if return_output:
+        return grad_norm, outputs.detach()
     return grad_norm
 
 
@@ -172,21 +214,27 @@ def gradient_norm(
         inputs: torch.Tensor,
         labels: torch.Tensor=None,
         loss_fn: callable=nn.CrossEntropyLoss(reduction="none"),
+        return_output: bool=False,
 ):
     model.eval()
     grad_flags = {k: v.requires_grad for k, v in model.named_parameters()}
     model.requires_grad_(True)  # only need grad for inputs
-    model_loss = lambda x, y: loss_fn(model(x), y)
-    grad_norm = []
-    for x, y in zip(inputs, labels):
+    grad_norm, outputs = [], []
+    for x, z in zip(inputs, labels):
         model.zero_grad()
-        loss = model_loss(x.unsqueeze(0), y.unsqueeze(0))
+        y = model(x.unsqueeze(0))
+        loss = loss_fn(y, z.unsqueeze(0))
         loss.backward()
         gradient = torch.cat([x.grad.detach().flatten() for x in model.parameters()])
         grad_norm.append(torch.linalg.norm(gradient).item())
+        if return_output:
+            outputs.append(y.detach())
     for k, v in model.named_parameters():
         v.requires_grad_(grad_flags[k])  # reset grad flags
-    return torch.tensor(grad_norm)
+    grad_norm = torch.tensor(grad_norm)
+    if return_output:
+        return grad_norm, torch.cat(outputs, dim=0)
+    return grad_norm
 
 
 def grand_score(
@@ -194,19 +242,34 @@ def grand_score(
         dataloader: torch.utils.data.DataLoader,
         loss_fn: callable=nn.CrossEntropyLoss(reduction="none"),
         device: str="cpu",
-        use_functional: bool=False,
+        use_functional: bool=True,
+        return_output: bool=False,
 ):
     """Paul, M., Ganguli, S., & Dziugaite, G. K. (2021).
     Deep learning on a data diet: Finding important examples early in training.
     Advances in Neural Information Processing Systems, 34, 20596-20607.
 
     GraNd score: norm of flattened per-example gradient.
+
+            return_output (bool, optional): Return outputs, i.e. model(data),
+                to avoid having to call eval twice when generating other metrics. Defaults to False.
     """
     if use_functional:
-        eval_fn = lambda m, d, l: functional_gradient_norm(m, d, l, loss_fn=loss_fn)
+        eval_fn = lambda m, d, l: functional_gradient_norm(
+            m, d, l, loss_fn=loss_fn, return_output=return_output)
     else:
-        eval_fn = lambda m, d, l: gradient_norm(m, d, l, loss_fn=loss_fn)
-    return torch.cat([*_eval_loop(model, dataloader, eval_fn, device)], dim=0)
+        eval_fn = lambda m, d, l: gradient_norm(
+            m, d, l, loss_fn=loss_fn, return_output=return_output)
+    scores, outputs = [], []
+    for grand in _eval_loop(model, dataloader, eval_fn, device):
+        if return_output:
+            grand, output = grand
+            outputs.append(output)
+        scores.append(grand)
+    scores = torch.cat(scores, dim=0)
+    if return_output:
+        return scores, torch.cat(outputs, dim=0)
+    return scores
 
 
 #TODO linear approximation of adversarial input margin (Jiang et al., 2018 c.f. Baldock)

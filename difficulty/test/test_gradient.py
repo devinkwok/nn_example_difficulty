@@ -24,25 +24,22 @@ class TestModel(unittest.TestCase):
         self.dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, drop_last=False)
         self.model = Model.get_model_from_name("cifar_resnet_14_8")
         self.n_inputs = torch.prod(torch.tensor(self.data.shape[1:]))
-        self.linear = self._make_linear_models(n_inputs=self.n_inputs)
-        self.tmp_file = Path("difficulty/test/tmp_test_gradient_save_file.npz")
+        self.linear = self._make_linear_models()
+        self.tmp_file = Path("difficulty/test/TEMP_TEST_DATA/gradient_save_file.npz")
         self.epsilon = 1e-6
 
     def tearDown(self) -> None:
         if self.tmp_file.exists():
             os.remove(self.tmp_file)
 
-    def _make_linear_models(self, n_models=1, n_inputs=None, weights=None, scale=1.):
+    def _make_linear_models(self, n_models=1, weights=None, scale=1.):
         models = []
         for i in range(n_models):
-            if n_inputs is None:
-                linear = nn.Linear(self.n_inputs, self.n_outputs)
-                if weights is None:
-                    weights = linear.weight.data
-                else:
-                    linear.weight.data = weights.detach().clone() * scale**i
+            linear = nn.Linear(self.n_inputs, self.n_outputs)
+            if weights is None:
+                weights = linear.weight.data
             else:
-                linear = nn.Linear(n_inputs, self.n_outputs)
+                linear.weight.data = weights.detach().clone() * scale**i
             # non-zero bias makes bigger gradients
             linear.bias.data = torch.full_like(linear.bias.data, 1)
             models.append(nn.Sequential(nn.Flatten(), linear))
@@ -132,6 +129,20 @@ class TestModel(unittest.TestCase):
             self.assertEqual(model[1].weight.requires_grad, weight_grad)
             self.assertEqual(model[1].bias.requires_grad, bias_grad)
 
+    def _returns_output(self, apply_fn):
+
+        def outputs_match(model, data):
+            model.train()  # check that model.eval() is called
+            _, out_1 = apply_fn(model, data)
+            with torch.no_grad():
+                model.eval()
+                out = model(data)
+            self._all_close(out, out_1)
+
+        outputs_match(self.model, self.data)
+        outputs_match(self.model, torch.ones_like(self.data))
+        outputs_match(self._make_linear_models(), torch.ones_like(self.data))
+
     def test_online_vog(self):
         models = self._make_linear_models(6, scale=-1.5)
         vog = variance_of_gradients(models, self.dataloader)
@@ -144,6 +155,10 @@ class TestModel(unittest.TestCase):
         # check that requires_grad flags are not affected
         self._grad_flags_unaffected(
             lambda m: variance_of_gradients([m, m], [(self.data, self.labels)]))
+        # add() returns outputs that are equivalent to model(x)
+        online_vog = OnlineVarianceOfGradients()
+        self._returns_output(lambda m, d: online_vog.add(
+            m, [(d, torch.zeros(len(d), dtype=torch.long))], return_output=True))
 
     def test_gradient_norm(self):
         # loss of 0 should give gradient norm of 0
@@ -160,10 +175,9 @@ class TestModel(unittest.TestCase):
         # check that requires_grad flags are not affected
         self._grad_flags_unaffected(
             lambda m: grand_score(m, [(self.data, self.labels)]))
-        # # check how long each method takes
-        # import timeit
-        # print(timeit.timeit(lambda: gradient_norm(self.model, self.data, self.labels), number=3))
-        # print(timeit.timeit(lambda: functional_gradient_norm(self.model, self.data, self.labels), number=3))
+        # returns outputs that are equivalent to model(x)
+        self._returns_output(lambda m, d: grand_score(
+            m, [(d, torch.zeros(len(d), dtype=torch.long))], return_output=True))
 
 
 if __name__ == '__main__':

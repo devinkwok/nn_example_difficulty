@@ -19,7 +19,7 @@ class TestMetrics(unittest.TestCase):
             "randn-high-bias": torch.randn(100, 2, 2) + torch.full((100, 2, 2), 100),
             "randn-high-var": torch.cat([torch.randn(100, 2, 2), torch.full((2, 2, 2), 100)], dim=0),
         }
-        self.tmp_file = Path("difficulty/test/tmp_test_accumulator_save_file.npz")
+        self.tmp_file = Path("difficulty/test/TEMP_TEST_DATA/accumulator_save_file.npz")
         self.dtype = torch.float64
 
     def tearDown(self) -> None:
