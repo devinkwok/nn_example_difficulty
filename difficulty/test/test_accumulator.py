@@ -2,6 +2,7 @@ import os
 import torch
 import unittest
 from pathlib import Path
+from functools import partial
 import numpy.testing as npt
 
 from difficulty.test.utils import ArgsUnchanged
@@ -62,6 +63,22 @@ class TestMetrics(unittest.TestCase):
                 obj = obj.load(self.tmp_file)
             self.assert_tensor_equal(obj.get(), obj_T.get())
 
+    def _test_metadata(self, AccumulateClass, data):
+        metadata = {"meta_str": "string", "data_int": -99, "list_float": 0.1234}
+        # test save/load metadata at init
+        obj = AccumulateClass(**metadata)
+        obj.save(self.tmp_file)
+        obj = obj.load(self.tmp_file)
+        {self.assertEqual(obj.metadata[k], v) for k, v in metadata.items()}
+        # test save/load list metadata at add
+        for i, y in enumerate(data):
+            obj.add(y, **metadata, count=i)
+            obj.save(self.tmp_file)
+            obj = obj.load(self.tmp_file)
+            {self.assertListEqual(obj.metadata_lists[k], [v]*(i+1))
+                for k, v in metadata.items()}
+            self.assertListEqual(obj.metadata_lists["count"], list(range(i+1)))
+
     def test_mean(self):
         mean_fn = lambda x, dim: torch.mean(x.to(dtype=self.dtype), dim=dim)
         for msg, data in self.data.items():
@@ -70,6 +87,7 @@ class TestMetrics(unittest.TestCase):
                                        data,
                                        data.to(self.dtype),
                                        mean_fn)
+        self._test_metadata(OnlineMean, data)
 
     def test_variance(self):
         var_fn = lambda x, dim: torch.var(x.to(dtype=self.dtype), dim=dim)
@@ -79,6 +97,7 @@ class TestMetrics(unittest.TestCase):
                                        data,
                                        torch.full_like(data, torch.nan, dtype=self.dtype),
                                        var_fn)
+        self._test_metadata(OnlineMean, data)
 
     def test_batch_accumulator(self):
         n_batches = 3
@@ -106,6 +125,8 @@ class TestMetrics(unittest.TestCase):
                     npt.assert_array_equal(obj.n[..., subset_idx], i + 1)
                 npt.assert_array_equal(output, i * data)
                 npt.assert_array_equal(obj.n, i + 1)
+        # check that metadata is preserved in save/load
+        self._test_metadata(partial(BatchAccumulator, data.shape[-1]), data)
 
 
 if __name__ == '__main__':

@@ -14,14 +14,19 @@ __all__ = [
 
 
 class Accumulator(ABC):
-
+    """Metadata must be a type that can be stored by numpy.savez without use_pickle=True.
+        E.g. str, int, float
+    Metadata must have keys distinct from variables in object,
+        E.g. a key of `n` is not allowed
+    However, metadata given to __init__() or add() can have the same keys and will remain distinct.
+    """
     def __init__(self, dtype=torch.float64, device="cpu", metadata_lists: Dict[str, list]={}, **metadata):
         # dtype allows using higher precision to minimize errors when accumulating
         self.metadata = {**metadata, "classname": type(self).__name__, "dtype": str(dtype), "device": str(device)}
         self.metadata_lists = defaultdict(list)
         for k, v in metadata_lists.items():
             assert isinstance(v, list)
-            self.metadata[k] = v
+            self.metadata_lists[k] = v
 
     @staticmethod
     def str_to_torch_dtype(dtype: str) -> torch.dtype:
@@ -36,18 +41,21 @@ class Accumulator(ABC):
         metadata, data, lists = {}, {}, {}
         for k, v in load_dict.items():
             # strip prefixes
-            if k.startswith("meta_"):
-                metadata[k[5:]] = v
-            elif k.startswith("data_"):
-                data[k[5:]] = v
-            elif k.startswith("list_"):
-                lists[k[5:]] = v
+            prefix, key = k[:5], k[5:]
+            if prefix == "meta_":  # unbox singleton from np.ndarray
+                metadata[key] = v.item()
+            elif prefix == "data_":
+                data[key] = v
+            elif prefix == "list_":
+                lists[key] = v
         assert cls.__name__ == str(metadata["classname"])
         dtype = cls.str_to_torch_dtype(metadata["dtype"])
         for k, v in data.items():
             if isinstance(v, np.ndarray):
                 data[k] = torch.tensor(v, dtype=dtype, device=str(metadata["device"]))
-        return cls(**metadata, metadata_lists=lists, **data)
+        for k, v in lists.items():
+            lists[k] = list(v)  # convert np.ndarrays back to lists
+        return cls( **data, metadata_lists=lists, **metadata)
 
     @property
     def dtype(self):
