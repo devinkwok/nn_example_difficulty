@@ -2,10 +2,10 @@ from abc import ABC
 from pathlib import Path
 from collections import defaultdict
 from typing import Dict, List
-from utils import get_dtype
-
 import torch
 import numpy as np
+
+from difficulty.utils import get_dtype
 
 
 __all__ = [
