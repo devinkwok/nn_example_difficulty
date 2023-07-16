@@ -3,21 +3,12 @@ from collections import defaultdict
 import numpy.testing as npt
 import torch
 
-from difficulty.test.utils import Model
+from difficulty.test.base import BaseTest
 from difficulty.model.eval import evaluate_model, evaluate_intermediates
 from difficulty.metrics import *
 
 
-class TestModel(unittest.TestCase):
-
-    def setUp(self):
-        self.n = 40*2
-        self.batch_size = 15
-        self.data = torch.randn([self.n, 3, 9, 9])
-        self.labels = torch.cat([torch.zeros(self.n // 2), torch.ones(self.n - self.n // 2)])
-        dataset = torch.utils.data.TensorDataset(self.data, self.labels)
-        self.dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, drop_last=False)
-        self.model = Model.get_model_from_name("cifar_resnet_14_8")
+class TestModel(BaseTest):
 
     def _combine_batches(self, generator):
         inputs, outputs, labels = [], [], []
@@ -37,8 +28,8 @@ class TestModel(unittest.TestCase):
             y = evaluate_intermediates(self.model, self.dataloader, device="cpu")
             input, hidden, output, labels = self._combine_batches(y)
             npt.assert_array_equal(input, self.data)
-            npt.assert_allclose(output, self.model(self.data), rtol=0.001, atol=1e-6)
-            npt.assert_array_equal(labels, self.labels)
+            self.all_close(output, self.model(self.data))
+            npt.assert_array_equal(labels, self.data_labels)
             layers = list(hidden.keys())
             npt.assert_array_equal(hidden[layers[0]], input)
             npt.assert_array_equal(hidden[layers[-1]], output)
@@ -116,7 +107,7 @@ class TestModel(unittest.TestCase):
     def test_eval_model(self):
         y = evaluate_model(self.model, self.dataloader, device="cpu")
         self.assertEqual(len(y), self.n)
-        npt.assert_allclose(y, self.model(self.data).detach().numpy(), rtol=0.001, atol=1e-6)
+        self.all_close(y, self.model(self.data).detach().numpy())
         y = evaluate_model(self.model, self.dataloader, device="cpu")
 
     def test_prediction_depth(self):
@@ -124,14 +115,14 @@ class TestModel(unittest.TestCase):
         _, y, outputs, _ = self._combine_batches(evaluate_intermediates(self.model, self.dataloader, device="cpu"))
         intermediates = [v for k, v in y.items() if "relu" in k]
         queries = [v[:self.n // 2] for v in intermediates]
-        pd = prediction_depth(intermediates, self.labels, queries, self.labels[:self.n // 2], k=2)
+        pd = prediction_depth(intermediates, self.data_labels, queries, self.data_labels[:self.n // 2], k=2)
         self.assertEqual(pd.shape, (self.n,))
         self.assertTrue(torch.all(0 <= pd))
         self.assertTrue(torch.all(pd <= len(intermediates)))
         # check that classifying the query points with k=1 is always identical to query labels
-        pd = prediction_depth(intermediates, self.labels, intermediates, self.labels, k=1)
+        pd = prediction_depth(intermediates, self.data_labels, intermediates, self.data_labels, k=1)
         npt.assert_array_equal(pd, torch.zeros_like(pd))  # always correct
-        pd = prediction_depth(intermediates, self.labels, intermediates, 1 - self.labels, k=1)
+        pd = prediction_depth(intermediates, self.data_labels, intermediates, 1 - self.data_labels, k=1)
         npt.assert_array_equal(pd, torch.full_like(pd, len(intermediates)))  # always wrong
         # check classification in an artificial task
         # query points are fixed at 0 and 1 in all layers
@@ -147,7 +138,7 @@ class TestModel(unittest.TestCase):
     def test_prototypes(self):
         _, y, _, _ = self._combine_batches(evaluate_intermediates(
             self.model, self.dataloader, device="cpu", include=['blocks.5.relu2.']))
-        distances = supervised_prototypes(y['blocks.5.relu2.out'], self.labels)
+        distances = supervised_prototypes(y['blocks.5.relu2.out'], self.data_labels)
         self.assertEqual(distances.shape, (self.n,))
         distances = self_supervised_prototypes(y['blocks.5.relu2.out'], k=10)
         self.assertEqual(distances.shape, (self.n,))

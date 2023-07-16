@@ -1,28 +1,8 @@
-from typing import List
-import numpy as np
-import numpy.testing as npt
+# modified from open_lth.models.cifar_resnet
 import torch.nn as nn
 import torch.nn.functional as F
 
 
-class ArgsUnchanged:
-    """Context manager for testing that arguments are not modified in place
-    by some operation.
-    """
-
-    def __init__(self, *args: List[np.ndarray]) -> None:
-        self.references = args
-        self.originals = [np.copy(x) for x in args]
-
-    def __enter__(self):
-        pass
-
-    def __exit__(self, exc_type, exc_value, exc_tb):
-        for x, y in zip(self.references, self.originals):
-            npt.assert_array_equal(x, y)
-
-
-# modified from open_lth.models.cifar_resnet
 class Model(nn.Module):
 
     class Block(nn.Module):
@@ -130,3 +110,7 @@ class Model(nn.Module):
         """
         plan = Model.plan_from_model_name(model_name)
         return Model(plan, outputs)
+
+    @staticmethod
+    def create():
+        return Model.get_model_from_name("cifar_resnet_14_8")

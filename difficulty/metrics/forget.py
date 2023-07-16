@@ -4,13 +4,9 @@
     neural network learning. In International Conference on Learning Representations.
 as well as additional similar metrics.
 
-Following functions assume dimensions (..., T, N) where T is steps (iterations)
+Default dimensions are (..., T, N) where T is steps (iterations)
 """
-from pathlib import Path
-from typing import Dict
 import torch
-
-from difficulty.metrics.accumulator import BatchAccumulator
 
 
 __all__ = [
@@ -20,7 +16,6 @@ __all__ = [
     "first_unlearnable",
     "count_forgetting",
     "is_unforgettable",
-    "OnlineCountForgetting",
 ]
 
 
@@ -111,11 +106,16 @@ def first_learn(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor:
 
 def first_unforgettable(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor:
     """Equivalent to _last_event_time(forgetting_events(_concat_iter(zero_one_accuracy, True, dim=dim, at_end=True), start_at_zero=True, dim=dim), dim=dim)
+    Also called iteration learned in Baldock et al. (2021),
+    and consistently-learned in Siddiqui et al. (2022).
 
-    Also called iteration learned in
     Baldock, R., Maennel, H., and Neyshabur, B. (2021).
     Deep learning through the lens of example difficulty.
     Advances In Neural Information Processing Systems, 34.
+
+    Siddiqui, S. A., Rajkumar, N., Maharaj, T., Krueger, D., & Hooker, S. (2022).
+    Metadata archaeology: Unearthing data subsets by leveraging training dynamics.
+    arXiv preprint arXiv:2209.10015.
 
     Args:
         zero_one_accuracy (torch.Tensor): output of pointwise.zero_one_accuracy(),
@@ -189,46 +189,3 @@ def is_unforgettable(zero_one_accuracy: torch.Tensor, start_at_zero=True, dim: i
     unforgotten = count_forgetting(zero_one_accuracy, start_at_zero=start_at_zero, dim=dim) == 0
     is_learned = first_learn(zero_one_accuracy, dim=dim) < zero_one_accuracy.shape[dim]
     return torch.logical_and(unforgotten, is_learned)
-
-
-#TODO OnlineFirstLearn
-
-
-#TODO OnlineFirstUnforgettable
-
-
-#TODO OnlineFirstForget
-
-
-#TODO OnlineFirstUnlearnable
-
-
-class OnlineCountForgetting(BatchAccumulator):
-
-    def __init__(self, n_items: int=None, start_at_zero: bool=True, n=None, n_forget=None, prev_acc=None, dtype=torch.long, device="cpu", metadata_lists: Dict[str, list]={}, **metadata):
-        super().__init__(n_items, n=n, dtype=dtype, device=device, metadata_lists=metadata_lists, start_at_zero=start_at_zero, **metadata)
-        self.prev_acc = prev_acc
-        self.n_forget = n_forget
-
-    def save(self, file: Path):
-        super().save(file, prev_acc=self.prev_acc, n_forget=self.n_forget)
-
-    def add(self, zero_one_accuracy: torch.Tensor, minibatch_idx: torch.Tensor=None, **metadata):
-        zero_one_accuracy = zero_one_accuracy.to(dtype=self.dtype, device=self.device)
-        if self.prev_acc is None:
-            # fix shape to have n_items
-            shape = list(zero_one_accuracy.shape)
-            shape[-1] = self.metadata["n_items"]
-            self.prev_acc = torch.full(shape, 0 if self.metadata["start_at_zero"] else 1, dtype=self.dtype, device=self.device)
-            self.n_forget = torch.zeros(shape, dtype=self.dtype, device=self.device)
-        n_forget, prev_acc = super().add(self.n_forget, self.prev_acc, minibatch_idx=minibatch_idx, **metadata)
-        acc = torch.stack([prev_acc, zero_one_accuracy], dim=-2)
-        n_forget += count_forgetting(acc, start_at_zero=True, dim=-2)
-        self.update_subset_(self.n_forget, n_forget, minibatch_idx=minibatch_idx)
-        self.update_subset_(self.prev_acc, zero_one_accuracy, minibatch_idx=minibatch_idx)
-
-    def get(self) -> torch.Tensor:
-        return self.n_forget
-
-
-#TODO OnlineIsUnforgettable
