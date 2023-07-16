@@ -182,6 +182,9 @@ class OnlineVarianceOfGradients(Accumulator):
         vog = self.var.get()
         return mean_pixels(vog)
 
+    def get_mean(self):
+        return self.var.get_mean()
+
 
 def functional_gradient_norm(
         model: nn.Module,

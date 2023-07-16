@@ -151,6 +151,9 @@ class OnlineVariance(Accumulator):
             return None
         return self.sum_sq / (self.mean.n - 1)
 
+    def get_mean(self):
+        return self.mean.get()
+
 
 class BatchAccumulator(Accumulator):
     """

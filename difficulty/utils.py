@@ -56,22 +56,42 @@ def pointwise_metrics(eval_logits: torch.Tensor,
     }, to_cpu=to_cpu, to_numpy=to_numpy)
 
 
-def train_forget_metrics(accuracy: torch.Tensor, detach=True, to_cpu=True, to_numpy=False) -> Dict[str, torch.Tensor]:
-    return detach({
-        "nforget": count_forgetting(accuracy),
-        "firstlearn": first_learn(accuracy),
-        "firstunforgettable": first_unforgettable(accuracy),
-        "unforgettable": is_unforgettable(accuracy),
-    }, to_cpu=to_cpu, to_numpy=to_numpy)
+def create_online_pointwise_metrics(dtype=torch.float64, device="cpu", **metadata):
+    return {
+        "acc": OnlineVariance(dtype=dtype, device=device, **metadata),
+        "ent": OnlineVariance(dtype=dtype, device=device, **metadata),
+        "conf": OnlineVariance(dtype=dtype, device=device, **metadata),
+        "maxconf": OnlineVariance(dtype=dtype, device=device, **metadata),
+        "margin": OnlineVariance(dtype=dtype, device=device, **metadata),
+        "el2n": OnlineVariance(dtype=dtype, device=device, **metadata),
+    }
 
 
-def perturb_forget_metrics(accuracy: torch.Tensor, detach=True, to_cpu=True, to_numpy=False) -> Dict[str, torch.Tensor]:
-    return detach({
-        "forget": count_forgetting(accuracy),
-        "firstforget": first_forget(accuracy),
-        "firstunlearnable": first_unlearnable(accuracy),
-        "unforgettable": is_unforgettable(accuracy),
-    }, to_cpu=to_cpu, to_numpy=to_numpy)
+def forget_metrics(accuracy: torch.Tensor, start_at_zero=True, dim=-2, detach=True, to_cpu=True, to_numpy=False) -> Dict[str, torch.Tensor]:
+    count_metrics = {"nforget": count_forgetting(accuracy, start_at_zero=start_at_zero, dim=dim),
+                     "unforgettable": is_unforgettable(accuracy, start_at_zero=start_at_zero, dim=dim)}
+    if start_at_zero:
+        order_metrics = {"firstlearn": first_learn(accuracy, dim=dim),
+                         "firstunforgettable": first_unforgettable(accuracy, dim=dim)}
+    else:
+        order_metrics = {"firstforget": first_forget(accuracy, dim=dim),
+                         "firstunlearnable": first_unlearnable(accuracy, dim=dim)}
+    return detach({**count_metrics, **order_metrics}, to_cpu=to_cpu, to_numpy=to_numpy)
+
+
+def create_online_forget_metrics(n_items: int, start_at_zero=True, dtype=torch.float64, device="cpu", **metadata):
+    count_metrics = {
+        "nforget": OnlineCountForgetting(n_items, start_at_zero=start_at_zero, dtype=dtype, device=device, **metadata),
+        "unforgettable": OnlineIsUnforgettable(n_items, start_at_zero=start_at_zero, dtype=dtype, device=device, **metadata),
+    }
+    if start_at_zero:
+        order_metrics = {
+            "firstlearn": OnlineFirstLearn(n_items, dtype=dtype, device=device, **metadata),
+            "firstunforgettable": OnlineFirstUnforgettable(n_items, dtype=dtype, device=device, **metadata),
+        }
+    else:
+        raise NotImplementedError("Must have start_at_zero=True")
+    return {**count_metrics, **order_metrics}
 
 
 def get_available_metrics(metric_dir: Path, include: List[str] = []):
