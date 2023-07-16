@@ -4,7 +4,7 @@
     neural network learning. In International Conference on Learning Representations.
 as well as additional similar metrics.
 
-Following functions assume dimensions (..., T, N) where T is steps (iterations)
+Default dimensions are (..., T, N) where T is steps (iterations)
 """
 import torch
 

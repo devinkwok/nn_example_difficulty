@@ -145,6 +145,9 @@ class TestMetrics(BaseTest):
     def test_online_first_learn(self):
         self._test_online_forgetting(OnlineFirstLearn, first_learn)
 
+    def test_online_first_unforgettable(self):
+        self._test_online_forgetting(OnlineFirstUnforgettable, first_unforgettable)
+
     def test_online_count_forgetting(self):
         self._test_online_forgetting(OnlineCountForgetting, count_forgetting)
 

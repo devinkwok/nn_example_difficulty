@@ -155,6 +155,7 @@ class OnlineVariance(Accumulator):
 class BatchAccumulator(Accumulator):
     """
     Assumes batches are indexed over dim=-1
+    TODO: allow batches to be indexed over arbitrary dimension
     Note: select_subset() clones tensors, so may not be differentiable
     """
     def __init__(self,
