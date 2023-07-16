@@ -142,8 +142,14 @@ class TestMetrics(BaseTest):
         # check that metadata is preserved in save/load
         self.check_accumulator_metadata(partial(Class, acc.shape[-1]), acc)
 
+    def test_online_first_learn(self):
+        self._test_online_forgetting(OnlineFirstLearn, first_learn)
+
     def test_online_count_forgetting(self):
         self._test_online_forgetting(OnlineCountForgetting, count_forgetting)
+
+    def test_online_is_unforgettable(self):
+        self._test_online_forgetting(OnlineIsUnforgettable, is_unforgettable)
 
 
 if __name__ == '__main__':
