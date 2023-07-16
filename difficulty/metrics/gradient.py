@@ -168,11 +168,11 @@ class OnlineVarianceOfGradients(Accumulator):
         """
         super()._add(torch.ones(1), **metadata)
         grad = input_gradient_from_dataloader(
-            model, dataloader, loss_fn=self.loss_fn, device=str(self.metadata["device"]),
-            return_output=return_output, use_argmax_labels=self.use_argmax_labels, dtype=self.metadata["dtype"])
+            model, dataloader, loss_fn=self.loss_fn, device=str(self.get_metadata("device")),
+            return_output=return_output, use_argmax_labels=self.use_argmax_labels, dtype=self.get_metadata("dtype"))
         if return_output:
             grad, out = grad
-        gradients = mean_color_channels(grad, channel_dim=int(self.metadata["channel_dim"]))
+        gradients = mean_color_channels(grad, channel_dim=int(self.get_metadata("channel_dim")))
         self.var.add(gradients, dim=None)
         if return_output:
             return self, out

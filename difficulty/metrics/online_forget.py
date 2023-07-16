@@ -30,7 +30,7 @@ class OnlineForgetting(BatchAccumulator):
         zero_one_accuracy = zero_one_accuracy.to(dtype=self.dtype, device=self.device)
         # fix shape to have n_items
         shape = list(zero_one_accuracy.shape)
-        shape[-1] = self.metadata["n_items"]
+        shape[-1] = self.get_metadata("n_items")
         outputs = []
         for tensor, default in tensors_defaults:
             if tensor is None:
@@ -100,7 +100,7 @@ class OnlineCountForgetting(OnlineForgetting):
 
     def add(self, zero_one_accuracy: torch.Tensor, minibatch_idx: torch.Tensor=None, **metadata):
         zero_one_accuracy, self.prev_acc, self.n_forget = self.init_tensors(
-            zero_one_accuracy, [(self.prev_acc, 0 if self.metadata["start_at_zero"] else 1), (self.n_forget, 0)])
+            zero_one_accuracy, [(self.prev_acc, 0 if self.get_metadata("start_at_zero") else 1), (self.n_forget, 0)])
         n_forget, prev_acc = super().add(self.n_forget, self.prev_acc, minibatch_idx=minibatch_idx, **metadata)
         acc = torch.stack([prev_acc, zero_one_accuracy], dim=-2)
         n_forget += count_forgetting(acc, start_at_zero=True, dim=-2)
@@ -123,7 +123,7 @@ class OnlineIsUnforgettable(OnlineForgetting):
 
     def add(self, zero_one_accuracy: torch.Tensor, minibatch_idx: torch.Tensor=None, **metadata):
         zero_one_accuracy, self.prev_acc, self.unforgotten = self.init_tensors(
-            zero_one_accuracy, [(self.prev_acc, 0 if self.metadata["start_at_zero"] else 1), (self.unforgotten, 1)])
+            zero_one_accuracy, [(self.prev_acc, 0 if self.get_metadata("start_at_zero") else 1), (self.unforgotten, 1)])
         unforgotten, prev_acc = super().add(self.unforgotten, self.prev_acc, minibatch_idx=minibatch_idx, **metadata)
         acc = torch.stack([prev_acc, zero_one_accuracy], dim=0)
         no_forget = count_forgetting(acc, start_at_zero=True, dim=0) == 0

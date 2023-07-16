@@ -68,7 +68,7 @@ def create_online_pointwise_metrics(dtype=torch.float64, device="cpu", **metadat
 
 
 def forget_metrics(accuracy: torch.Tensor, start_at_zero=True, dim=-2, detach=True, to_cpu=True, to_numpy=False) -> Dict[str, torch.Tensor]:
-    count_metrics = {"nforget": count_forgetting(accuracy, start_at_zero=start_at_zero, dim=dim),
+    count_metrics = {"countforget": count_forgetting(accuracy, start_at_zero=start_at_zero, dim=dim),
                      "unforgettable": is_unforgettable(accuracy, start_at_zero=start_at_zero, dim=dim)}
     if start_at_zero:
         order_metrics = {"firstlearn": first_learn(accuracy, dim=dim),
@@ -81,7 +81,7 @@ def forget_metrics(accuracy: torch.Tensor, start_at_zero=True, dim=-2, detach=Tr
 
 def create_online_forget_metrics(n_items: int, start_at_zero=True, dtype=torch.float64, device="cpu", **metadata):
     count_metrics = {
-        "nforget": OnlineCountForgetting(n_items, start_at_zero=start_at_zero, dtype=dtype, device=device, **metadata),
+        "countforget": OnlineCountForgetting(n_items, start_at_zero=start_at_zero, dtype=dtype, device=device, **metadata),
         "unforgettable": OnlineIsUnforgettable(n_items, start_at_zero=start_at_zero, dtype=dtype, device=device, **metadata),
     }
     if start_at_zero:

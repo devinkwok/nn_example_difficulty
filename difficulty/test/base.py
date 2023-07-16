@@ -95,4 +95,5 @@ class BaseTest(unittest.TestCase):
 
     def all_close(self, X, Y):
         # this test is more forgiving to account for gpu noise and low precision
-        torch.testing.assert_allclose(X + self.epsilon, Y + self.epsilon, atol=1e-5, rtol=1e-4)
+        torch.testing.assert_close(X + self.epsilon, Y + self.epsilon,
+                                   atol=1e-5, rtol=1e-4, equal_nan=True, check_dtype=False)

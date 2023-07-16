@@ -107,7 +107,7 @@ class TestModel(BaseTest):
     def test_eval_model(self):
         y = evaluate_model(self.model, self.dataloader, device="cpu")
         self.assertEqual(len(y), self.n)
-        self.all_close(y, self.model(self.data).detach().numpy())
+        self.all_close(y, self.model(self.data))
         y = evaluate_model(self.model, self.dataloader, device="cpu")
 
     def test_prediction_depth(self):

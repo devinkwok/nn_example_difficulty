@@ -51,13 +51,17 @@ class Accumulator(ABC):
             lists[k] = list(v)  # convert np.ndarrays back to lists
         return cls( **data, metadata_lists=lists, **metadata)
 
+    def get_metadata(self, key: str): return self.metadata[key]
+
+    def get_metadata_list(self, key: str): return self.metadata_lists[key]
+
     @property
     def dtype(self):
-        return get_dtype(self.metadata["dtype"])
+        return get_dtype(self.get_metadata("dtype"))
 
     @property
     def device(self):
-        return str(self.metadata["device"])
+        return str(self.get_metadata("device"))
 
     def save(self, file: Path, **data):
         # cannot have metadata that shares same keys as data, otherwise causes conflict when loading
