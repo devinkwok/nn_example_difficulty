@@ -2,6 +2,7 @@ from abc import ABC
 from pathlib import Path
 from collections import defaultdict
 from typing import Dict, List
+from utils import get_dtype
 
 import torch
 import numpy as np
@@ -28,13 +29,6 @@ class Accumulator(ABC):
             assert isinstance(v, list)
             self.metadata_lists[k] = v
 
-    @staticmethod
-    def str_to_torch_dtype(dtype: str) -> torch.dtype:
-        dtype = str(dtype)
-        assert dtype.startswith("torch.")
-        dtype = dtype.split("torch.")[1]
-        return getattr(torch, dtype)
-
     @classmethod
     def load(cls, file: Path):
         load_dict = dict(np.load(file))
@@ -49,7 +43,7 @@ class Accumulator(ABC):
             elif prefix == "list_":
                 lists[key] = v
         assert cls.__name__ == str(metadata["classname"])
-        dtype = cls.str_to_torch_dtype(metadata["dtype"])
+        dtype = get_dtype(metadata["dtype"])
         for k, v in data.items():
             if isinstance(v, np.ndarray):
                 data[k] = torch.tensor(v, dtype=dtype, device=str(metadata["device"]))
@@ -59,7 +53,7 @@ class Accumulator(ABC):
 
     @property
     def dtype(self):
-        return self.str_to_torch_dtype(self.metadata["dtype"])
+        return get_dtype(self.metadata["dtype"])
 
     @property
     def device(self):

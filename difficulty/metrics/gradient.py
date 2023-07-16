@@ -1,14 +1,15 @@
-from typing import Dict, List
+from typing import Dict, List, Union
 from pathlib import Path
 import torch
 import torch.nn as nn
 from functorch import jacrev, make_functional_with_buffers
 from difficulty.metrics.pointwise import softmax, class_confidence
 from difficulty.metrics.accumulator import Accumulator, OnlineVariance
+from difficulty.utils import get_dtype
 
 
 __all__ = [
-    "ClassOutput",
+    "softmax_class_confidence",
     "input_gradient",
     "input_gradient_from_dataloader",
     "mean_color_channels",
@@ -21,19 +22,8 @@ __all__ = [
 ]
 
 
-class ClassOutput(nn.Module):
-    def __init__(self, softmax=True, use_argmax_labels=False) -> None:
-        super().__init__()
-        self.softmax = softmax
-        self.use_argmax_labels = use_argmax_labels
-
-    def forward(self, x, labels):
-        if self.softmax:
-            x = softmax(x)
-        if self.use_argmax_labels:
-            labels = torch.argmax(x, dim=-1).detach()
-        conf = class_confidence(x, labels)
-        return conf
+def softmax_class_confidence(x, labels):
+    return class_confidence(softmax(x), labels)
 
 
 def _eval_loop(
@@ -53,9 +43,12 @@ def input_gradient(
         model: nn.Module,
         inputs: torch.Tensor,
         labels: torch.Tensor=None,
-        loss_fn: callable=ClassOutput(),
+        loss_fn: callable=softmax_class_confidence,
         return_output: bool=False,
+        use_argmax_labels: bool=False,
+        dtype: Union[str, torch.dtype]=torch.float64,
 ):
+    dtype = get_dtype(dtype)
     model.eval()
     # prevent input from belonging to multiple computation graphs
     inputs = inputs.detach()
@@ -63,24 +56,29 @@ def input_gradient(
     model.requires_grad_(False)  # only need grad for inputs
     inputs.requires_grad_(True)  # in place operation
     y = model(inputs)
+    if use_argmax_labels:
+        labels = torch.argmax(y, dim=-1)
     loss = loss_fn(y, labels)
     loss.backward(torch.ones_like(loss))
-    gradient = inputs.grad.detach()
+    gradient = inputs.grad.detach().to(dtype=dtype)
     for k, v in model.named_parameters():
         v.requires_grad_(grad_flags[k])  # reset grad flags
     if return_output:
-        return gradient, y.detach()
+        return gradient, y.detach().to(dtype=dtype)
     return gradient
 
 
 def input_gradient_from_dataloader(
         model: nn.Module,
         dataloader: torch.utils.data.DataLoader,
-        loss_fn: callable=ClassOutput(),
+        loss_fn: callable=softmax_class_confidence,
         device: str="cpu",
         return_output: bool=False,
+        use_argmax_labels: bool=False,
+        dtype: Union[str, torch.dtype]=torch.float64,
 ):
-    eval_fn = lambda m, d, l: input_gradient(m, d, l, loss_fn=loss_fn, return_output=True)
+    eval_fn = lambda m, d, l: input_gradient(
+        m, d, l, loss_fn=loss_fn, return_output=True, use_argmax_labels=use_argmax_labels, dtype=dtype)
     iterator = _eval_loop(model, dataloader, eval_fn, device)
     gradients, outputs = [], []
     for gradient, output in iterator:
@@ -105,8 +103,10 @@ def variance_of_gradients(
         models: List[nn.Module],
         dataloader: torch.utils.data.DataLoader,
         device="cpu",
+        loss_fn: callable=softmax_class_confidence,
         use_predicted_labels=False,
         channel_dim=-3,
+        dtype: Union[str, torch.dtype]=torch.float64,
 ):
     """Agarwal, C., D'souza, D., & Hooker, S. (2022).
     Estimating example difficulty using variance of gradients.
@@ -121,8 +121,9 @@ def variance_of_gradients(
     # average gradient over color channels
     gradients = []
     for model in models:
-        grad = input_gradient_from_dataloader(model, dataloader, loss_fn=ClassOutput(
-            softmax=True, use_argmax_labels=use_predicted_labels), device=device, return_output=False)
+        grad = input_gradient_from_dataloader(
+            model, dataloader, loss_fn=loss_fn, device=device,
+            return_output=False, use_argmax_labels=use_predicted_labels, dtype=dtype)
         gradients.append(mean_color_channels(grad, channel_dim=channel_dim))
     # compute variance over all timesteps
     gradients = torch.stack(gradients, dim=0)
@@ -139,14 +140,17 @@ class OnlineVarianceOfGradients(Accumulator):
                  n=None,
                  sum=None,
                  sum_sq=None,
-                 dtype: torch.dtype=torch.float64,
+                 dtype: Union[str, torch.dtype]=torch.float64,
+                 loss_fn: callable=softmax_class_confidence,
+                 use_argmax_labels: bool=False,
                  device: str="cpu",
                  metadata_lists: Dict[str, list]={},
                  **metadata
     ):
         super().__init__(dtype=dtype, device=device, metadata_lists=metadata_lists, use_predicted_labels=use_predicted_labels, channel_dim=channel_dim, **metadata)
         self.var = OnlineVariance(n=n, sum=sum, sum_sq=sum_sq, dtype=dtype, device=device)
-        self.loss_fn = ClassOutput(softmax=True, use_argmax_labels=use_predicted_labels)
+        self.use_argmax_labels = use_argmax_labels
+        self.loss_fn = loss_fn
 
     def save(self, file: Path):
         super().save(file, n=self.var.mean.n, sum=self.var.mean.sum, sum_sq=self.var.sum_sq)
@@ -164,9 +168,8 @@ class OnlineVarianceOfGradients(Accumulator):
         """
         super()._add(torch.ones(1), **metadata)
         grad = input_gradient_from_dataloader(
-            model, dataloader,
-            loss_fn=self.loss_fn, device=str(self.metadata["device"]),
-            return_output=return_output)
+            model, dataloader, loss_fn=self.loss_fn, device=str(self.metadata["device"]),
+            return_output=return_output, use_argmax_labels=self.use_argmax_labels, dtype=self.metadata["dtype"])
         if return_output:
             grad, out = grad
         gradients = mean_color_channels(grad, channel_dim=int(self.metadata["channel_dim"]))
@@ -186,7 +189,9 @@ def functional_gradient_norm(
         labels: torch.Tensor=None,
         loss_fn: callable=nn.CrossEntropyLoss(reduction="none"),
         return_output: bool=False,
+        dtype: Union[str, torch.dtype]=torch.float64,
 ):
+    dtype = get_dtype(dtype)
     model.eval()
     func_model, params, buffers = make_functional_with_buffers(model)
 
@@ -201,11 +206,11 @@ def functional_gradient_norm(
     jacobian = jacrev(model_loss, argnums=0, has_aux=return_output)(params, buffers, inputs, labels)
     if return_output:
         jacobian, outputs = jacobian
-    gradients = [x.detach().reshape(n_examples, -1) for x in jacobian]
+    gradients = [x.detach().reshape(n_examples, -1).to(dtype=dtype) for x in jacobian]
     gradients = torch.cat(gradients, dim=-1)
     grad_norm = torch.linalg.vector_norm(gradients, dim=-1)
     if return_output:
-        return grad_norm, outputs.detach()
+        return grad_norm, outputs.detach().to(dtype=dtype)
     return grad_norm
 
 
@@ -215,7 +220,9 @@ def gradient_norm(
         labels: torch.Tensor=None,
         loss_fn: callable=nn.CrossEntropyLoss(reduction="none"),
         return_output: bool=False,
+        dtype: Union[str, torch.dtype]=torch.float64,
 ):
+    dtype = get_dtype(dtype)
     model.eval()
     grad_flags = {k: v.requires_grad for k, v in model.named_parameters()}
     model.requires_grad_(True)  # only need grad for inputs
@@ -225,10 +232,10 @@ def gradient_norm(
         y = model(x.unsqueeze(0))
         loss = loss_fn(y, z.unsqueeze(0))
         loss.backward()
-        gradient = torch.cat([x.grad.detach().flatten() for x in model.parameters()])
+        gradient = torch.cat([x.grad.detach().flatten().to(dtype=dtype) for x in model.parameters()])
         grad_norm.append(torch.linalg.norm(gradient).item())
         if return_output:
-            outputs.append(y.detach())
+            outputs.append(y.detach().to(dtype=dtype))
     for k, v in model.named_parameters():
         v.requires_grad_(grad_flags[k])  # reset grad flags
     grad_norm = torch.tensor(grad_norm)
@@ -244,6 +251,7 @@ def grand_score(
         device: str="cpu",
         use_functional: bool=True,
         return_output: bool=False,
+        dtype: Union[str, torch.dtype]=torch.float64,
 ):
     """Paul, M., Ganguli, S., & Dziugaite, G. K. (2021).
     Deep learning on a data diet: Finding important examples early in training.
@@ -256,10 +264,10 @@ def grand_score(
     """
     if use_functional:
         eval_fn = lambda m, d, l: functional_gradient_norm(
-            m, d, l, loss_fn=loss_fn, return_output=return_output)
+            m, d, l, loss_fn=loss_fn, return_output=return_output, dtype=dtype)
     else:
         eval_fn = lambda m, d, l: gradient_norm(
-            m, d, l, loss_fn=loss_fn, return_output=return_output)
+            m, d, l, loss_fn=loss_fn, return_output=return_output, dtype=dtype)
     scores, outputs = [], []
     for grand in _eval_loop(model, dataloader, eval_fn, device):
         if return_output:

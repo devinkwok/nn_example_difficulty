@@ -111,11 +111,16 @@ def first_learn(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor:
 
 def first_unforgettable(zero_one_accuracy: torch.Tensor, dim=-2) -> torch.Tensor:
     """Equivalent to _last_event_time(forgetting_events(_concat_iter(zero_one_accuracy, True, dim=dim, at_end=True), start_at_zero=True, dim=dim), dim=dim)
+    Also called iteration learned in Baldock et al. (2021),
+    and consistently-learned in Siddiqui et al. (2022).
 
-    Also called iteration learned in
     Baldock, R., Maennel, H., and Neyshabur, B. (2021).
     Deep learning through the lens of example difficulty.
     Advances In Neural Information Processing Systems, 34.
+
+    Siddiqui, S. A., Rajkumar, N., Maharaj, T., Krueger, D., & Hooker, S. (2022).
+    Metadata archaeology: Unearthing data subsets by leveraging training dynamics.
+    arXiv preprint arXiv:2209.10015.
 
     Args:
         zero_one_accuracy (torch.Tensor): output of pointwise.zero_one_accuracy(),

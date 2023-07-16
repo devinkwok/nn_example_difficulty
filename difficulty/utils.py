@@ -1,6 +1,6 @@
 from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, List
+from typing import Union, Dict, List
 import numpy as np
 import pandas as pd
 import torch
@@ -8,48 +8,70 @@ import torch
 from difficulty.metrics import *
 
 
-def pointwise_metrics(eval_logits: np.ndarray, labels: np.ndarray) -> np.ndarray:
+def get_dtype(dtype: Union[str, torch.dtype]) -> torch.dtype:
+    dtype = str(dtype)
+    if not dtype.startswith("torch."):
+        raise ValueError(f"Invalid torch dtype string: {dtype}")
+    dtype = dtype.split("torch.")[1]
+    return getattr(torch, dtype)
+
+
+def apply(tensors: Dict[str, torch.Tensor], prefix: str=None, apply_fn: callable=lambda x: x) -> Dict[str, torch.Tensor]:
+    return {k if prefix is None else f"{prefix}_{k}": apply_fn(v) for k, v in tensors.items()}
+
+
+def detach(tensors: Dict[str, torch.Tensor], to_cpu=True, to_numpy=False):
+    def apply_detach(tensor):
+        tensor = tensor.detach()
+        if to_cpu: tensor = tensor.cpu()
+        if to_numpy: tensor = tensor.numpy()
+        return tensor
+    return apply(tensors, apply_fn=apply_detach)
+
+
+def average(metrics: Dict[str, torch.Tensor], dim=0) -> Dict[str, torch.Tensor]:
+    return apply(metrics, "avg", lambda x: torch.mean(x, dim=dim))
+
+
+def last_metrics(metrics: Dict, dim=0) -> Dict[str, torch.Tensor]:
+    return apply(metrics, "last", lambda x: torch.index_select(x, dim=dim, index=[0]))
+
+
+def pointwise_metrics(eval_logits: torch.Tensor,
+                      labels: torch.Tensor,
+                      detach=True,
+                      to_cpu=True,
+                      to_numpy=False,
+                      dtype: Union[str, torch.dtype]=torch.float64,
+    ) -> Dict[str, torch.Tensor]:
+    eval_logits = eval_logits.to(dtype=get_dtype(dtype))
     prob = softmax(eval_logits)
-    return {
+    return detach({
         "acc": zero_one_accuracy(eval_logits, labels),
         "ent": entropy(eval_logits, labels),
         "conf": class_confidence(prob, labels),
         "maxconf": max_confidence(prob),
         "margin": margin(prob, labels),
         "el2n": error_l2_norm(prob, labels),
-    }
+    }, to_cpu=to_cpu, to_numpy=to_numpy)
 
 
-def train_forget_metrics(eval_logits: np.ndarray, labels: np.ndarray) -> np.ndarray:
-    acc = zero_one_accuracy(eval_logits, labels)
-    return {
-        "forget": count_forgetting(acc),
-        "first-learned": first_learn(acc),
-        "first-unforgettable": first_unforgettable(acc),
-        "unforgettable": is_unforgettable(acc),
-    }
+def train_forget_metrics(accuracy: torch.Tensor, detach=True, to_cpu=True, to_numpy=False) -> Dict[str, torch.Tensor]:
+    return detach({
+        "nforget": count_forgetting(accuracy),
+        "firstlearn": first_learn(accuracy),
+        "firstunforgettable": first_unforgettable(accuracy),
+        "unforgettable": is_unforgettable(accuracy),
+    }, to_cpu=to_cpu, to_numpy=to_numpy)
 
 
-def perturb_forget_metrics(eval_logits: np.ndarray, labels: np.ndarray) -> np.ndarray:
-    acc = zero_one_accuracy(eval_logits, labels)
-    return {
-        "forget": count_forgetting(acc),
-        "first-forget": first_forget(acc),
-        "first-unlearnable": first_unlearnable(acc),
-        "unforgettable": is_unforgettable(acc),
-    }
-
-
-def avg_metrics(metrics: Dict):
-    return {"avg_" + k: np.mean(v, axis=0) for k, v in metrics.items()}
-
-
-def last_metrics(metrics: Dict):
-    return {"last_" + k: v[-1, ...] for k, v in metrics.items()}
-
-
-def add_prefix(prefix, metrics: Dict):
-    return {prefix + "_" + k: v for k, v in metrics.items()}
+def perturb_forget_metrics(accuracy: torch.Tensor, detach=True, to_cpu=True, to_numpy=False) -> Dict[str, torch.Tensor]:
+    return detach({
+        "forget": count_forgetting(accuracy),
+        "firstforget": first_forget(accuracy),
+        "firstunlearnable": first_unlearnable(accuracy),
+        "unforgettable": is_unforgettable(accuracy),
+    }, to_cpu=to_cpu, to_numpy=to_numpy)
 
 
 def get_available_metrics(metric_dir: Path, include: List[str] = []):

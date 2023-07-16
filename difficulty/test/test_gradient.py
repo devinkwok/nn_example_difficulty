@@ -39,14 +39,14 @@ class TestModel(BaseTest):
         grad_batch = input_gradient_from_dataloader(self.model, self.dataloader, device="cpu")
         self.all_close(grad, grad_batch)
         # linear model has linear response to input, so long as softmax is excluded from loss
-        grad = input_gradient(self.linear, self.data, torch.zeros_like(self.data_labels), loss_fn=ClassOutput(softmax=False))
+        grad = input_gradient(self.linear, self.data, torch.zeros_like(self.data_labels), loss_fn=class_confidence)
         step_size = 1.
-        greater = self.data + step_size * grad
+        greater = (self.data + step_size * grad).to(dtype=self.data.dtype)
         npt.assert_array_less(self.linear(self.data)[..., 0].detach(), self.linear(greater)[..., 0].detach())
         # check that argmax labels are being applied
-        grad = input_gradient(self.linear, self.data, loss_fn=ClassOutput(softmax=False, use_argmax_labels=True))
+        grad = input_gradient(self.linear, self.data, loss_fn=class_confidence, use_argmax_labels=True)
         step_size = 1.
-        greater = self.data + step_size * grad
+        greater = (self.data + step_size * grad).to(dtype=self.data.dtype)
         npt.assert_array_less(np.max(self.linear(self.data).detach().numpy(), axis=-1),
                               np.max(self.linear(greater).detach().numpy(), axis=-1))
 
