@@ -15,6 +15,7 @@ from difficulty.metrics.accumulator import BatchAccumulator
 
 
 __all__ = [
+    "create_online_forget_metrics",
     "OnlineFirstLearn",
     "OnlineFirstUnforgettable",
     # "OnlineFirstForget",
@@ -24,6 +25,21 @@ __all__ = [
 ]
 
 
+def create_online_forget_metrics(n_items: int, start_at_zero=True, dtype=torch.float64, device="cpu", **metadata):
+    count_metrics = {
+        "countforget": OnlineCountForgetting(n_items, start_at_zero=start_at_zero, dtype=dtype, device=device, **metadata),
+        "unforgettable": OnlineIsUnforgettable(n_items, start_at_zero=start_at_zero, dtype=dtype, device=device, **metadata),
+    }
+    if start_at_zero:
+        order_metrics = {
+            "firstlearn": OnlineFirstLearn(n_items, dtype=dtype, device=device, **metadata),
+            "firstunforgettable": OnlineFirstUnforgettable(n_items, dtype=dtype, device=device, **metadata),
+        }
+    else:
+        raise NotImplementedError("Must have start_at_zero=True")
+    return {**count_metrics, **order_metrics}
+
+
 class OnlineForgetting(BatchAccumulator):
 
     def init_tensors(self, zero_one_accuracy, tensors_defaults: List[Tuple[torch.Tensor, float]]):
@@ -31,13 +47,13 @@ class OnlineForgetting(BatchAccumulator):
         # fix shape to have n_items
         shape = list(zero_one_accuracy.shape)
         shape[-1] = self.get_metadata("n_items")
-        outputs = []
+        outputs = [zero_one_accuracy]
         for tensor, default in tensors_defaults:
             if tensor is None:
                 outputs.append(torch.full(shape, default, dtype=self.dtype, device=self.device))
             else:
                 outputs.append(tensor)
-        return zero_one_accuracy, *outputs
+        return tuple(outputs)
 
 
 class OnlineFirstLearn(OnlineForgetting):

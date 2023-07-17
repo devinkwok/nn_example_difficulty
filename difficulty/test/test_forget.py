@@ -154,6 +154,11 @@ class TestMetrics(BaseTest):
     def test_online_is_unforgettable(self):
         self._test_online_forgetting(OnlineIsUnforgettable, is_unforgettable)
 
+    def test_convenience_function(self):
+        for acc in self.acc:
+            forget_metrics(acc)
+            create_online_forget_metrics(n_items=len(acc))
+
 
 if __name__ == '__main__':
     unittest.main()

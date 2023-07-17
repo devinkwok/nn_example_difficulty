@@ -7,9 +7,13 @@ as well as additional similar metrics.
 Default dimensions are (..., T, N) where T is steps (iterations)
 """
 import torch
+from typing import Dict
+
+from difficulty.utils import detach_tensors
 
 
 __all__ = [
+    "forget_metrics",
     "first_learn",
     "first_unforgettable",
     "first_forget",
@@ -17,6 +21,18 @@ __all__ = [
     "count_forgetting",
     "is_unforgettable",
 ]
+
+
+def forget_metrics(accuracy: torch.Tensor, start_at_zero=True, dim=-2, detach=True, to_cpu=True, to_numpy=False) -> Dict[str, torch.Tensor]:
+    count_metrics = {"countforget": count_forgetting(accuracy, start_at_zero=start_at_zero, dim=dim),
+                     "unforgettable": is_unforgettable(accuracy, start_at_zero=start_at_zero, dim=dim)}
+    if start_at_zero:
+        order_metrics = {"firstlearn": first_learn(accuracy, dim=dim),
+                         "firstunforgettable": first_unforgettable(accuracy, dim=dim)}
+    else:
+        order_metrics = {"firstforget": first_forget(accuracy, dim=dim),
+                         "firstunlearnable": first_unlearnable(accuracy, dim=dim)}
+    return detach_tensors({**count_metrics, **order_metrics}, to_cpu=to_cpu, to_numpy=to_numpy)
 
 
 def _concat_iter(tensor: torch.Tensor, fill_value=0, dim: int=-2, at_end=False):

@@ -78,6 +78,19 @@ class TestMetrics(BaseTest):
                 x = rank(logit).numpy()
             npt.assert_array_equal(np.argsort(x, axis=-1), np.argsort(logit, axis=-1))
 
+    def test_convenience_function(self):
+        for logit, label in zip(self.logits, self.logit_labels):
+            results = pointwise_metrics(logit, label)
+            prob = softmax(logit)
+            self.all_close(results["acc"], zero_one_accuracy(logit, label))
+            self.all_close(results["ent"], entropy(logit, label))
+            self.all_close(results["conf"], class_confidence(prob, label))
+            self.all_close(results["maxconf"], max_confidence(prob))
+            self.all_close(results["margin"], margin(prob, label))
+            self.all_close(results["el2n"], error_l2_norm(prob, label))
+            # check that the following run without import issues
+            create_online_pointwise_metrics()
+
 
 if __name__ == '__main__':
     unittest.main()

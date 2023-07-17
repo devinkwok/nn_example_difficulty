@@ -1,8 +1,42 @@
 """Following functions assume the last dimension of eval_logits or eval_softmax
 is over $C$ classes, and second last dimension is over $N$ examples.
 """
+from typing import Union, Dict
 import torch
 import torch.nn.functional as F
+
+from difficulty.utils import get_dtype, detach_tensors
+from difficulty.metrics.accumulator import OnlineVariance
+
+
+def pointwise_metrics(eval_logits: torch.Tensor,
+                      labels: torch.Tensor,
+                      detach=True,
+                      to_cpu=True,
+                      to_numpy=False,
+                      dtype: Union[str, torch.dtype]=torch.float64,
+    ) -> Dict[str, torch.Tensor]:
+    eval_logits = eval_logits.to(dtype=get_dtype(dtype))
+    prob = softmax(eval_logits)
+    return detach_tensors({
+        "acc": zero_one_accuracy(eval_logits, labels),
+        "ent": entropy(eval_logits, labels),
+        "conf": class_confidence(prob, labels),
+        "maxconf": max_confidence(prob),
+        "margin": margin(prob, labels),
+        "el2n": error_l2_norm(prob, labels),
+    }, to_cpu=to_cpu, to_numpy=to_numpy)
+
+
+def create_online_pointwise_metrics(dtype=torch.float64, device="cpu", **metadata):
+    return {
+        "acc": OnlineVariance(dtype=dtype, device=device, **metadata),
+        "ent": OnlineVariance(dtype=dtype, device=device, **metadata),
+        "conf": OnlineVariance(dtype=dtype, device=device, **metadata),
+        "maxconf": OnlineVariance(dtype=dtype, device=device, **metadata),
+        "margin": OnlineVariance(dtype=dtype, device=device, **metadata),
+        "el2n": OnlineVariance(dtype=dtype, device=device, **metadata),
+    }
 
 
 def softmax(eval_logits: torch.Tensor) -> torch.Tensor:
