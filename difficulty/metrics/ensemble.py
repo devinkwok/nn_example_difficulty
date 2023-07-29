@@ -35,7 +35,6 @@ def ensemble_metrics(
     #TODO conf, agr
     return {
         "allacc": accuracies.get(),
-        "ddd": accuracies.dichotomous_data_difficulty(),
         "consensuslabel": consensus_labels.get(),
     }
 
