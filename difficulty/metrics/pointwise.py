@@ -68,9 +68,9 @@ def max_confidence(eval_softmax: torch.Tensor) -> torch.Tensor:
 
 def margin(eval_softmax: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
     """From
-    Toneva, M., Sordoni, A., des Combes, R. T., Trischler, A., Bengio, Y., and
-    Gordon, G. J. (2019). An empirical study of example forgetting during deep
-    neural network learning. In International Conference on Learning Representations.
+    Pleiss, G., Zhang, T., Elenberg, E., & Weinberger, K. Q. (2020).
+    Identifying mislabeled data using the area under the margin ranking.
+    Advances in Neural Information Processing Systems, 33, 17044-17056.
 
     Returns:
         torch.Tensor: difference between correct class confidence and max other class confidence
