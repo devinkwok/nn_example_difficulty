@@ -20,7 +20,7 @@ def pointwise_metrics(eval_logits: torch.Tensor,
     prob = softmax(eval_logits)
     return detach_tensors({
         "acc": zero_one_accuracy(eval_logits, labels),
-        "ent": entropy(eval_logits, labels),
+        "ent": entropy(prob),
         "conf": class_confidence(prob, labels),
         "maxconf": max_confidence(prob),
         "margin": margin(prob, labels),
@@ -49,16 +49,10 @@ def zero_one_accuracy(eval_logits: torch.Tensor, labels: torch.Tensor) -> torch.
     return acc
 
 
-def entropy(eval_logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    # broadcast labels
-    labels = torch.broadcast_to(labels, eval_logits.shape[:-1])
-    labels = torch.moveaxis(labels, -1, 0)
-    eval_logits = torch.moveaxis(eval_logits, [-2, -1], [0, 1])
-    with torch.no_grad():
-        ent = F.cross_entropy(eval_logits, labels, reduction='none')
-    # move dims back
-    ent = torch.moveaxis(ent, 0, -1)
-    return ent
+def entropy(eval_softmax: torch.Tensor) -> torch.Tensor:
+    # in Shannon entropy, 0 * log(0) = 0
+    ent_log =  torch.log(eval_softmax).nan_to_num(nan=0.)
+    return -1 * torch.sum(eval_softmax * ent_log, dim=-1)
 
 
 def class_confidence(eval_softmax: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:

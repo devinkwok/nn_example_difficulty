@@ -25,11 +25,20 @@ class TestMetrics(BaseTest):
             self.assertEqual(x.shape, logit.shape[:-1])
 
     def test_entropy(self):
-        for logit, label in zip(self.logits, self.logit_labels):
-            with self.ArgsUnchanged(logit, label):
-                x = entropy(logit, label).numpy()
+        for logit in self.logits:
+            prob = softmax(logit)
+            with self.ArgsUnchanged(prob):
+                x = entropy(prob).numpy()
             self.assertEqual(x.shape, logit.shape[:-1])
             npt.assert_array_less(0, x)
+            # entropy of deterministic variable is 0
+            deterministic = torch.zeros(logit.shape[-1])
+            deterministic[0] = 1.
+            det_ent = entropy(deterministic)
+            npt.assert_array_equal(0, det_ent)
+            # entropy of uniform distribution is maximal
+            uniform = entropy(torch.ones(logit.shape[-1]) / logit.shape[-1])
+            npt.assert_array_less(x, uniform)
 
     def test_class_confidence(self):
         for logit, label, zeros in zip(self.logits, self.logit_labels, self.zero_labels):
@@ -83,7 +92,7 @@ class TestMetrics(BaseTest):
             results = pointwise_metrics(logit, label)
             prob = softmax(logit)
             self.all_close(results["acc"], zero_one_accuracy(logit, label))
-            self.all_close(results["ent"], entropy(logit, label))
+            self.all_close(results["ent"], entropy(prob))
             self.all_close(results["conf"], class_confidence(prob, label))
             self.all_close(results["maxconf"], max_confidence(prob))
             self.all_close(results["margin"], margin(prob, label))
