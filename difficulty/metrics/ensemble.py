@@ -69,6 +69,7 @@ class OnlineConsensusLabels(Accumulator):
 
     def add(self, eval_logits: torch.Tensor, dim=None, class_dim=-1, **metadata):
         super()._add(eval_logits, **metadata)
+        eval_logits = eval_logits.to(device=self.device)
         predicted = F.one_hot(torch.argmax(eval_logits, dim=class_dim),
                               num_classes=eval_logits.shape[class_dim])
         predicted = torch.moveaxis(predicted, -1, class_dim)
@@ -76,7 +77,7 @@ class OnlineConsensusLabels(Accumulator):
             assert (dim % len(eval_logits.shape)) != (class_dim % len(eval_logits.shape))
             predicted = torch.sum(predicted, dim=dim)
         if self.class_count is None:
-            self.class_count = torch.zeros_like(predicted, dtype=torch.long)
+            self.class_count = torch.zeros_like(predicted, dtype=torch.long, device=self.device)
         self.class_count += predicted
         return self
 

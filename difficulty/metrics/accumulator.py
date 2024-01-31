@@ -79,7 +79,7 @@ class Accumulator(ABC):
     def _add(self, *tensors: torch.Tensor, **metadata):
         for k, v in metadata.items():
             self.metadata_lists[k].append(v)
-        output = tuple(x.to(dtype=self.dtype) for x in tensors)
+        output = tuple(x.to(dtype=self.dtype, device=self.device) for x in tensors)
         return output[0] if len(tensors) == 1 else output
 
     def add(self, x: torch.Tensor, dim=None, **metadata):
