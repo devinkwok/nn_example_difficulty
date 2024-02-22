@@ -1,5 +1,6 @@
-import torch
 import unittest
+import warnings
+import torch
 from functools import partial
 import numpy.testing as npt
 
@@ -20,19 +21,28 @@ class TestMetrics(BaseTest):
             "randn-high-var": torch.cat([torch.randn(100, 2, 2), torch.full((2, 2, 2), 100)], dim=0),
         }
         self.dtype = torch.float64
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            warnings.warn("CUDA device not available, only testing on cpu.")
+            self.device = torch.device("cpu")
 
-    def _test_accumulator(self, AccumulateClass, data, identity_value, ref_fn):
+    def _test_accumulator(self, AccumulateClass, data, ref_fn, identity_value=None):
         # identity AxBxC
         with self.ArgsUnchanged(data):
             obj = AccumulateClass()
             obj.save(self.tmp_file)
             obj = AccumulateClass.load(self.tmp_file)
             obj.add(data)
-            self.all_close(obj.get(), identity_value)
+            if identity_value is not None:
+                self.all_close(obj.get(), identity_value)
         # compute over A elements of size BxC
+        # also test tensors from different devices (e.g. cuda vs cpu)
         with self.ArgsUnchanged(data):
             obj = AccumulateClass()
             for i, y in enumerate(data):
+                if i % 2 == 0:
+                    y = y.to(device=self.device)
                 obj.add(y)
             self.all_close(obj.get(), ref_fn(data, dim=0))
         # compute over AxB elements of size C
@@ -40,7 +50,7 @@ class TestMetrics(BaseTest):
         for y in data:
             with self.ArgsUnchanged(data, y):
                 obj.add(y, dim=0)
-                obj_T = obj_T.add(y.T, dim=1)
+                obj_T = obj_T.add(y.T, dim=-1)
         self.all_close(obj.get(), ref_fn(data.reshape(-1, data.shape[-1]), dim=0))
         self.all_close(obj.get(), obj_T.get())
         # save and load, and also check return value of add()
@@ -58,8 +68,8 @@ class TestMetrics(BaseTest):
             with self.subTest(msg, data=data[0, 0, 0]):
                 self._test_accumulator(OnlineMean,
                                        data,
-                                       data.to(self.dtype),
-                                       mean_fn)
+                                       mean_fn,
+                                       data.to(self.dtype))
         self.check_accumulator_metadata(OnlineMean, data)
 
     def test_variance(self):
@@ -68,9 +78,36 @@ class TestMetrics(BaseTest):
             with self.subTest(msg, data=data[0, 0, 0]):
                 self._test_accumulator(OnlineVariance,
                                        data,
-                                       torch.full_like(data, torch.nan, dtype=self.dtype),
-                                       var_fn)
+                                       var_fn,
+                                       torch.full_like(data, torch.nan, dtype=self.dtype))
         self.check_accumulator_metadata(OnlineMean, data)
+
+    def test_consensus_labels(self):
+        # for testing purposes, infer class dim != dim
+        class TestConsensusLabels(OnlineConsensusLabels):
+            def add(self, eval_logits, dim=None, **metadata):
+                class_dim = -1 if dim is None else (dim + 1) % 2
+                return super().add(eval_logits, dim=dim, class_dim=class_dim, **metadata)
+
+        def label_fn(x, dim):
+            label = torch.argmax(x, dim=-1)
+            label = label.moveaxis(dim, -1)
+            shape = label.shape[:-1]
+            output = []
+            for v in label.reshape(-1, label.shape[-1]):
+                values, counts = v.unique(sorted=True, return_counts=True)
+                output.append(values[torch.argmax(counts)])
+            output = torch.tensor(output).reshape(shape)
+            return output
+
+        for msg, data in self.test_data.items():
+            if data.dtype is not torch.bool:
+                # add class dim
+                with self.subTest(msg, data=data[0, 0, 0]):
+                    self._test_accumulator(TestConsensusLabels,
+                                        data,
+                                        label_fn)
+        self.check_accumulator_metadata(TestConsensusLabels, data)
 
     def test_batch_accumulator(self):
         n_batches = 3
