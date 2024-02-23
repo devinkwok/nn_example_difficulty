@@ -112,7 +112,7 @@ class TestModel(BaseTest):
 
     def test_prediction_depth(self):
         # check that outputs are correct shape and ranges
-        _, y, outputs, _ = self._combine_batches(evaluate_intermediates(self.model, self.dataloader, device="cpu"))
+        _, y, _, _ = self._combine_batches(evaluate_intermediates(self.model, self.dataloader, device="cpu"))
         intermediates = [v for k, v in y.items() if "relu" in k]
         queries = [v[:self.n // 2] for v in intermediates]
         pd = prediction_depth(intermediates, self.data_labels, queries, self.data_labels[:self.n // 2], k=2)
@@ -140,14 +140,38 @@ class TestModel(BaseTest):
             self.model, self.dataloader, device="cpu", include=['blocks.5.relu2.']))
         distances = supervised_prototypes(y['blocks.5.relu2.out'], self.data_labels)
         self.assertEqual(distances.shape, (self.n,))
-        distances = self_supervised_prototypes(y['blocks.5.relu2.out'], k=10)
+        distances, kmeans = self_supervised_prototypes(y['blocks.5.relu2.out'], k=10, return_kmeans_obj=True)
         self.assertEqual(distances.shape, (self.n,))
-        #TODO supervised using labels from self-supervised should be equal
-        #TODO artificial data: zero mean and 1 mean
-        # distances in supervised_prototypes equal std (with known mean)
-        zero_mean = torch.randn(40, 20)
-        one_mean = torch.randn(40, 20)
-        # distances in self_supervised_prototypes with k=2 are equal or less (due to misclassification)
+        # supervised using labels from self-supervised should be equal
+        dist_supervised = supervised_prototypes(y['blocks.5.relu2.out'], torch.tensor(kmeans.labels_))
+        self.all_close(distances, dist_supervised)
+
+        # artificial data: clusters x and y with differing means
+        x = torch.randn(5000, 50)
+        y = torch.randn(5000, 50) + torch.ones(50).reshape(1, -1)
+        x_mean = torch.mean(x, dim=0)
+        y_mean = torch.mean(y, dim=0)
+        representations = torch.cat([x, y], dim=0)
+        labels = torch.tensor([0]*5000 + [1]*5000)
+
+        # distances in supervised_prototypes should be somewhat less (due to empirical mean) than std, which is sqrt(n)
+        distance = supervised_prototypes(representations, labels)
+        mean_diff = (torch.sqrt(torch.tensor(50)) - torch.mean(distance)).item()
+        self.assertTrue(mean_diff > 0 and mean_diff < 1e-1)
+        # check that distance is calculated from empirical mean of each class
+        means = torch.cat([x_mean.broadcast_to(5000, 50), y_mean.broadcast_to(5000, 50)], dim=0)
+        dist_from_means = torch.linalg.norm(representations - means, ord=2, dim=-1)
+        self.all_close(distance, dist_from_means)
+
+        # distances in self_supervised_prototypes with k=2 should be close to supervised with high probability
+        dist_self, kmeans = self_supervised_prototypes(representations, k=2, return_kmeans_obj=True)
+        n_distance_diff = torch.count_nonzero(torch.abs(dist_self - distance) > 1e-2)
+        self.assertLess(n_distance_diff, 0.01 * len(labels))
+        # misclassified objects have less distance with high probability
+        agreement = torch.tensor(kmeans.labels_) == labels
+        n = torch.count_nonzero(agreement)
+        misclassified = torch.logical_not(agreement) if n > len(agreement) - n else agreement
+        self.assertLess(torch.count_nonzero(dist_self[misclassified] > dist_from_means[misclassified]), 2)
 
 
 if __name__ == '__main__':
