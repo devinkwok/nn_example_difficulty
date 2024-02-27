@@ -4,29 +4,16 @@ import numpy.testing as npt
 import torch
 
 from difficulty.test.base import BaseTest
-from difficulty.model.eval import evaluate_model, evaluate_intermediates
+from difficulty.model.eval import evaluate_model, evaluate_intermediates, combine_batches
 from difficulty.metrics import *
 
 
 class TestModel(BaseTest):
 
-    def _combine_batches(self, generator):
-        inputs, outputs, labels = [], [], []
-        hiddens = defaultdict(list)
-        for input, hidden, output, label in generator:
-            inputs.append(input)
-            outputs.append(output)
-            labels.append(label)
-            for k, v in hidden.items():
-                hiddens[k].append(v)
-        for k, v in hiddens.items():
-            hiddens[k] = torch.cat(v, dim=0)
-        return torch.cat(inputs, dim=0), hiddens, torch.cat(outputs, dim=0), torch.cat(labels, dim=0)
-
     def test_evaluate_intermediates(self):
         with torch.no_grad():
             y = evaluate_intermediates(self.model, self.dataloader, device="cpu")
-            input, hidden, output, labels = self._combine_batches(y)
+            input, hidden, output, labels = combine_batches(y)
             npt.assert_array_equal(input, self.data)
             self.all_close(output, self.model(self.data))
             npt.assert_array_equal(labels, self.data_labels)
@@ -91,28 +78,28 @@ class TestModel(BaseTest):
             # only save input/output to top level module
             first_module, *_  = self.model.named_modules()
             y = evaluate_intermediates(self.model, self.dataloader, device="cpu", named_modules=[first_module])
-            _, hidden, _, _ = self._combine_batches(y)
+            _, hidden, _, _ = combine_batches(y)
             npt.assert_array_equal(hidden['.in'], input)
             npt.assert_array_equal(hidden['.out'], output)
             npt.assert_array_equal(list(hidden.keys()), ['.in', '.out'])
             # include selected layers
             y = evaluate_intermediates(self.model, self.dataloader, device="cpu", include=["fc"])
-            _, hidden, _, _ = self._combine_batches(y)
+            _, hidden, _, _ = combine_batches(y)
             npt.assert_array_equal(list(hidden.keys()), ['fc.in', 'fc.out'])
             # exclude selected layers
             y = evaluate_intermediates(self.model, self.dataloader, device="cpu", exclude=["conv", "bn", "relu", "shortcut", ".in", "fc."])
-            _, hidden, _, _ = self._combine_batches(y)
+            _, hidden, _, _ = combine_batches(y)
             npt.assert_array_equal(list(hidden.keys()), ['blocks.0.out', 'blocks.1.out', 'blocks.2.out', 'blocks.3.out', 'blocks.4.out', 'blocks.5.out', ".out"])
 
     def test_eval_model(self):
-        y = evaluate_model(self.model, self.dataloader, device="cpu")
+        y, _, _, _ = evaluate_model(self.model, self.dataloader, device="cpu")
         self.assertEqual(len(y), self.n)
         self.all_close(y, self.model(self.data))
-        y = evaluate_model(self.model, self.dataloader, device="cpu")
+        y, _, _, _ = evaluate_model(self.model, self.dataloader, device="cpu")
 
     def test_prediction_depth(self):
         # check that outputs are correct shape and ranges
-        _, y, _, _ = self._combine_batches(evaluate_intermediates(self.model, self.dataloader, device="cpu"))
+        _, y, _, _ = combine_batches(evaluate_intermediates(self.model, self.dataloader, device="cpu"))
         intermediates = [v for k, v in y.items() if "relu" in k]
         queries = [v[:self.n // 2] for v in intermediates]
         pd = prediction_depth(intermediates, self.data_labels, queries, self.data_labels[:self.n // 2], k=2)
@@ -136,7 +123,7 @@ class TestModel(BaseTest):
         npt.assert_array_equal(pd, [3, 2, 1, 0])
 
     def test_prototypes(self):
-        _, y, _, _ = self._combine_batches(evaluate_intermediates(
+        _, y, _, _ = combine_batches(evaluate_intermediates(
             self.model, self.dataloader, device="cpu", include=['blocks.5.relu2.']))
         distances = supervised_prototypes(y['blocks.5.relu2.out'], self.data_labels)
         self.assertEqual(distances.shape, (self.n,))
