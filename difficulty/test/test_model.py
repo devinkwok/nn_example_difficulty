@@ -12,7 +12,7 @@ class TestModel(BaseTest):
 
     def test_evaluate_intermediates(self):
         with torch.no_grad():
-            y = evaluate_intermediates(self.model, self.dataloader, device="cpu")
+            y = evaluate_intermediates(self.model, self.dataloader, device=self.device)
             input, hidden, output, labels = combine_batches(y)
             npt.assert_array_equal(input, self.data)
             self.all_close(output, self.model(self.data))
@@ -77,40 +77,60 @@ class TestModel(BaseTest):
                  ])
             # only save input/output to top level module
             first_module, *_  = self.model.named_modules()
-            y = evaluate_intermediates(self.model, self.dataloader, device="cpu", named_modules=[first_module])
+            y = evaluate_intermediates(self.model, self.dataloader, device=self.device, named_modules=[first_module])
             _, hidden, _, _ = combine_batches(y)
             npt.assert_array_equal(hidden['.in'], input)
             npt.assert_array_equal(hidden['.out'], output)
             npt.assert_array_equal(list(hidden.keys()), ['.in', '.out'])
             # include selected layers
-            y = evaluate_intermediates(self.model, self.dataloader, device="cpu", include=["fc"])
+            y = evaluate_intermediates(self.model, self.dataloader, device=self.device, include=["fc"])
             _, hidden, _, _ = combine_batches(y)
             npt.assert_array_equal(list(hidden.keys()), ['fc.in', 'fc.out'])
             # exclude selected layers
-            y = evaluate_intermediates(self.model, self.dataloader, device="cpu", exclude=["conv", "bn", "relu", "shortcut", ".in", "fc."])
+            y = evaluate_intermediates(self.model, self.dataloader, device=self.device, exclude=["conv", "bn", "relu", "shortcut", ".in", "fc."])
             _, hidden, _, _ = combine_batches(y)
             npt.assert_array_equal(list(hidden.keys()), ['blocks.0.out', 'blocks.1.out', 'blocks.2.out', 'blocks.3.out', 'blocks.4.out', 'blocks.5.out', ".out"])
 
     def test_eval_model(self):
-        y, _, _, _ = evaluate_model(self.model, self.dataloader, device="cpu")
+        y, _, _, _ = evaluate_model(self.model, self.dataloader, device=self.device)
         self.assertEqual(len(y), self.n)
         self.all_close(y, self.model(self.data))
-        y, _, _, _ = evaluate_model(self.model, self.dataloader, device="cpu")
+        y, _, _, _ = evaluate_model(self.model, self.dataloader, device=self.device)
+
+    def subset_pd_intermediates(self, intermediates):
+        return [v for k, v in intermediates.items() if "relu" in k]
 
     def test_prediction_depth(self):
         # check that outputs are correct shape and ranges
-        _, y, _, _ = combine_batches(evaluate_intermediates(self.model, self.dataloader, device="cpu"))
-        intermediates = [v for k, v in y.items() if "relu" in k]
+        _, y, _, _ = combine_batches(evaluate_intermediates(self.model, self.dataloader, device=self.device))
+        intermediates = self.subset_pd_intermediates(y)
         train_data = [v[:self.n // 2] for v in intermediates]
-        pd = prediction_depth(train_data, self.data_labels[:self.n // 2], intermediates, self.data_labels, k=2)
+        train_labels = self.data_labels[:self.n // 2]
+        pd = prediction_depth(train_data, train_labels, intermediates, self.data_labels, k=2)
         self.assertEqual(pd.shape, (self.n,))
         self.assertTrue(torch.all(0 <= pd))
         self.assertTrue(torch.all(pd <= len(intermediates)))
+
+        # check that object is the same as function
+        pd_obj = PredictionDepth(train_data, train_labels, k=2)
+        obj_outputs = []
+        # run over batches
+        for _, x, _, labels in evaluate_intermediates(self.model, self.dataloader, device=self.device):
+            x = self.subset_pd_intermediates(x)
+            obj_outputs.append(pd_obj(x, labels))
+        self.all_close(torch.cat(obj_outputs, dim=0), pd)
+
         # check that classifying the training points with k=1 is always identical to training labels
         pd = prediction_depth(intermediates, self.data_labels, intermediates, self.data_labels, k=1)
+        self.assertEqual(pd.shape, (self.n,))
         npt.assert_array_equal(pd, torch.zeros_like(pd))  # always correct
+        # flipping labels makes prediction depth always the max
         pd = prediction_depth(intermediates, 1 - self.data_labels, intermediates, self.data_labels, k=1)
-        npt.assert_array_equal(pd, torch.full_like(pd, len(intermediates)))  # always wrong
+        npt.assert_array_equal(pd, torch.full_like(pd, len(intermediates)))
+        # check that dict input works, and omitting test points classifies training points
+        pd = prediction_depth(y, self.data_labels, k=1)
+        npt.assert_array_equal(pd, torch.zeros_like(pd))
+
         # check classification in an artificial task
         # train points are fixed at 0 and 1 in all layers
         train_points = torch.stack([torch.zeros(3), torch.ones(3)], dim=1)
@@ -124,7 +144,7 @@ class TestModel(BaseTest):
 
     def test_prototypes(self):
         _, y, _, _ = combine_batches(evaluate_intermediates(
-            self.model, self.dataloader, device="cpu", include=['blocks.5.relu2.']))
+            self.model, self.dataloader, device=self.device, include=['blocks.5.relu2.']))
         distances = supervised_prototypes(y['blocks.5.relu2.out'], self.data_labels)
         self.assertEqual(distances.shape, (self.n,))
         distances, kmeans = self_supervised_prototypes(y['blocks.5.relu2.out'], k=10, return_kmeans_obj=True)
@@ -159,6 +179,33 @@ class TestModel(BaseTest):
         n = torch.count_nonzero(agreement)
         misclassified = torch.logical_not(agreement) if n > len(agreement) - n else agreement
         self.assertLess(torch.count_nonzero(dist_self[misclassified] > dist_from_means[misclassified]), 2)
+
+
+    def test_representation_metrics(self):
+        SEED = 42
+        _, y, _, _ = combine_batches(evaluate_intermediates(self.model, self.dataloader, device=self.device))
+
+        # use default values
+        pd = prediction_depth(y, self.data_labels)
+        representation = list(y.values())[-1]
+        proto = supervised_prototypes(representation, self.data_labels)
+        selfproto = self_supervised_prototypes(representation, random_state=SEED)
+        scores = representation_metrics(self.model, self.dataloader, device=self.device, selfproto_random_state=SEED)
+        self.all_close(scores["pd"], pd)
+        self.all_close(scores["proto"], proto)
+        self.all_close(scores["selfproto"], selfproto)
+
+        # use non-defaults
+        test_dataloader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(self.data, 1 - self.data_labels))
+        pd = prediction_depth(y, self.data_labels, y, 1 - self.data_labels, k=2)
+        proto = supervised_prototypes(y['blocks.5.relu2.out'], self.data_labels)
+        selfproto = self_supervised_prototypes(y['blocks.5.relu2.out'], k=10, random_state=SEED)
+        scores = representation_metrics(self.model, self.dataloader, device=self.device,
+                                        pd_test_dataloader=test_dataloader, pd_k=2,
+                                        proto_layer='blocks.5.relu2.out', selfproto_k=10, selfproto_random_state=SEED)
+        self.all_close(scores["pd"], pd)
+        self.all_close(scores["proto"], proto)
+        self.all_close(scores["selfproto"], selfproto)
 
 
 if __name__ == '__main__':

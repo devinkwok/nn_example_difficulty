@@ -1,5 +1,4 @@
 import unittest
-import warnings
 import torch
 from functools import partial
 import numpy.testing as npt
@@ -21,11 +20,6 @@ class TestMetrics(BaseTest):
             "randn-high-var": torch.cat([torch.randn(100, 2, 2), torch.full((2, 2, 2), 100)], dim=0),
         }
         self.dtype = torch.float64
-        if torch.cuda.is_available():
-            self.device = torch.device("cuda")
-        else:
-            warnings.warn("CUDA device not available, only testing on cpu.")
-            self.device = torch.device("cpu")
 
     def _test_accumulator(self, AccumulateClass, data, ref_fn, identity_value=None):
         # identity AxBxC

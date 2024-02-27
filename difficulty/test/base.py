@@ -1,5 +1,6 @@
 import os
 import unittest
+import warnings
 from typing import List
 from pathlib import Path
 import numpy as np
@@ -72,6 +73,12 @@ class BaseTest(unittest.TestCase):
         self.n_inputs = torch.prod(torch.tensor(self.data.shape[1:]))
         self.n_outputs = 10
         self.epsilon = 1e-6
+
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            warnings.warn("CUDA device not available, only testing on cpu.")
+            self.device = torch.device("cpu")
 
     def tearDown(self) -> None:
         if self.tmp_file.exists():

@@ -2,7 +2,7 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from collections import OrderedDict
-from typing import Iterable, List, Tuple, Dict, Generator
+from typing import Iterable, List, Tuple, Dict, Generator, Optional
 import torch
 import torch.nn as nn
 
@@ -169,7 +169,8 @@ def evaluate_model(model: nn.Module,
                    state_dict: Dict=None,
                    device: str="cuda",
                    return_accuracy: bool=False,
-                   loss_fn: nn.Module=None):
+                   loss_fn: nn.Module=None
+) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
     """Evaluate model and return outputs, and optionally labels, accuracy, and loss.
     This does not return intermediate values.
 
@@ -184,7 +185,7 @@ def evaluate_model(model: nn.Module,
             `loss_fn(outputs, labels)` in return. Defaults to None.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor, Optional[None, torch.Tensor], Optional[None, torch.Tensor]]:
+        Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
             a tuple of (outputs, true labels, accuracy, loss), with first dimension over examples in batch order.
             If return_accuracy or loss_fn are not set, accuracy or loss are None respectively.
     """
