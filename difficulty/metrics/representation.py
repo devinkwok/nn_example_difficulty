@@ -6,7 +6,6 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.cluster import KMeans
 
 from difficulty.metrics.forget import first_unforgettable
-from difficulty.model.eval import evaluate_intermediates
 
 
 __all__ = [
@@ -16,7 +15,7 @@ __all__ = [
 ]
 
 
-def _nearest_neighbour(representations: torch.Tensor, query_points: torch.Tensor, labels: torch.Tensor, k: int) -> torch.Tensor:
+def nearest_neighbour(representations: torch.Tensor, query_points: torch.Tensor, labels: torch.Tensor, k: int) -> torch.Tensor:
     knn = KNeighborsClassifier(k)  # use standard Euclidean distance
     representations = representations.reshape(representations.shape[0], -1).detach().cpu().numpy()
     query_points = query_points.reshape(query_points.shape[0], -1).detach().cpu().numpy()
@@ -25,32 +24,76 @@ def _nearest_neighbour(representations: torch.Tensor, query_points: torch.Tensor
     return torch.tensor(predictions).to(dtype=labels.dtype, device=labels.device)
 
 
-def prediction_depth(intermediate_activations: List[torch.Tensor], consensus_labels: torch.Tensor,
-                     query_activations: List[torch.Tensor], query_labels: torch.Tensor, k: int=30) -> np.ndarray:
+class PredictionDepth:
     """From
     Baldock, R., Maennel, H., and Neyshabur, B. (2021).
     Deep learning through the lens of example difficulty.
     Advances In Neural Information Processing Systems, 34.
 
     Args:
-        intermediate_activations (List[torch.Tensor]): per-example activations in order of layer depth.
+        train_intermediates (List[torch.Tensor]): per-example activations in order of layer depth.
             Activations have shape (N, ...) where N is number of examples, and remaining dimensions are flattened
-        consensus_labels (torch.Tensor): labels to compare against KNN predictions, with shape (N,)
+        train_labels (torch.Tensor): labels to compare against KNN predictions, with shape (N,)
             In Baldock et al. (2021), these are set to the predictions of a majority of ensembled models.
-        query_activations (List[torch.Tensor]): activations for examples used as KNN query points,
+        test_intermediates (List[torch.Tensor]): activations for examples used to fit the KNN,
             with shape (M, ...). In Baldock et al. (2021), these are the entire training dataset.
-        query_labels (torch.Tensor): labels to match to KNN predictions, with shape (M,)
-            In Baldock et al. (2021), these are the consensus labels of the query examples.
+        test_labels (torch.Tensor): labels used to fit the KNN, with shape (M,)
+            In Baldock et al. (2021), these are the consensus labels of the knn_activations.
 
     Returns:
         torch.Tensor: prediction depth (note: this is NOT backprop-enabled)
     """
-    predictions = [_nearest_neighbour(v, q, query_labels, k)
-                   for v, q in zip(intermediate_activations, query_activations)]
-    # dims L*C where L is intermediate layers, C is classes
-    layer_predict = torch.stack(predictions, dim=0)
-    match = (layer_predict == consensus_labels.broadcast_to(layer_predict.shape))
-    return first_unforgettable(match)
+    def __init__(self,
+            intermediate_activations: List[torch.Tensor],
+            consensus_labels: torch.Tensor,
+            k: int=30
+    ) -> None:
+        """_summary_
+
+        Args:
+            intermediate_activations (List[torch.Tensor]): per-example activations in order of layer depth, for training knn.
+            consensus_labels (torch.Tensor): _description_
+            k (int, optional): _description_. Defaults to 30.
+        """
+        labels = consensus_labels.detach().cpu().numpy()
+        self.knns = []
+        for intermediates in intermediate_activations:
+            knn = KNeighborsClassifier(k)  # use standard Euclidean distance
+            intermediates = intermediates.reshape(intermediates.shape[0], -1).detach().cpu().numpy()
+            knn.fit(intermediates, labels)
+            self.knns.append(knn)
+
+    def predict(self, intermediates, labels):
+        knn_predictions = []
+        for x, knn in zip(intermediates, self.knns):
+            predictions = knn.predict(x.reshape(x.shape[0], -1).detach().cpu().numpy())
+            predictions = torch.tensor(predictions).to(dtype=labels.dtype, device=labels.device)
+            knn_predictions.append(predictions)
+        # dims L \times C where L is intermediate layers, C is classes
+        layer_predict = torch.stack(knn_predictions, dim=0)
+        match = (layer_predict == labels.broadcast_to(layer_predict.shape))
+        return first_unforgettable(match)
+
+    def __call__(self, intermediate_activations, labels):
+        return self.predict(intermediate_activations, labels)
+
+
+def prediction_depth(train_intermediates: List[torch.Tensor], train_labels: torch.Tensor,
+                     test_intermediates: List[torch.Tensor], test_labels: torch.Tensor, k: int=30) -> np.ndarray:
+    """Functional equivalent of PredictionDepth for a single call, instead of repeated calls over batches.
+
+    Args:
+        train_intermediates (List[torch.Tensor]): _description_
+        train_labels (torch.Tensor): _description_
+        test_intermediates (List[torch.Tensor]): _description_
+        test_labels (torch.Tensor): _description_
+        k (int, optional): _description_. Defaults to 30.
+
+    Returns:
+        np.ndarray: _description_
+    """
+    pd_object = PredictionDepth(train_intermediates, train_labels, k)
+    return pd_object(test_intermediates, test_labels)
 
 
 def supervised_prototypes(representations: torch.Tensor, labels: torch.Tensor):

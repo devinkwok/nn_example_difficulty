@@ -101,25 +101,25 @@ class TestModel(BaseTest):
         # check that outputs are correct shape and ranges
         _, y, _, _ = combine_batches(evaluate_intermediates(self.model, self.dataloader, device="cpu"))
         intermediates = [v for k, v in y.items() if "relu" in k]
-        queries = [v[:self.n // 2] for v in intermediates]
-        pd = prediction_depth(intermediates, self.data_labels, queries, self.data_labels[:self.n // 2], k=2)
+        train_data = [v[:self.n // 2] for v in intermediates]
+        pd = prediction_depth(train_data, self.data_labels[:self.n // 2], intermediates, self.data_labels, k=2)
         self.assertEqual(pd.shape, (self.n,))
         self.assertTrue(torch.all(0 <= pd))
         self.assertTrue(torch.all(pd <= len(intermediates)))
-        # check that classifying the query points with k=1 is always identical to query labels
+        # check that classifying the training points with k=1 is always identical to training labels
         pd = prediction_depth(intermediates, self.data_labels, intermediates, self.data_labels, k=1)
         npt.assert_array_equal(pd, torch.zeros_like(pd))  # always correct
-        pd = prediction_depth(intermediates, self.data_labels, intermediates, 1 - self.data_labels, k=1)
+        pd = prediction_depth(intermediates, 1 - self.data_labels, intermediates, self.data_labels, k=1)
         npt.assert_array_equal(pd, torch.full_like(pd, len(intermediates)))  # always wrong
         # check classification in an artificial task
-        # query points are fixed at 0 and 1 in all layers
-        query_points = torch.stack([torch.zeros(3), torch.ones(3)], dim=1)
-        query_labels = torch.tensor([0, 1])
+        # train points are fixed at 0 and 1 in all layers
+        train_points = torch.stack([torch.zeros(3), torch.ones(3)], dim=1)
+        train_labels = torch.tensor([0, 1])
         # examples start from 0.2n and shift by 0.2 per layer, prediction changes at threshold 0.5
         test_points = torch.linspace(0, 0.6, 4).reshape(-1, 1)
         labels = torch.ones(4)
         right_shift = [test_points + i*0.2 for i in range(3)]
-        pd = prediction_depth(right_shift, labels, query_points, query_labels, k=1)
+        pd = prediction_depth(train_points, train_labels, right_shift, labels, k=1)
         npt.assert_array_equal(pd, [3, 2, 1, 0])
 
     def test_prototypes(self):

@@ -11,7 +11,6 @@ from difficulty.metrics.accumulator import OnlineVariance
 
 def pointwise_metrics(eval_logits: torch.Tensor,
                       labels: torch.Tensor,
-                      detach=True,
                       to_cpu=True,
                       to_numpy=False,
                       dtype: Union[str, torch.dtype]=torch.float64,
