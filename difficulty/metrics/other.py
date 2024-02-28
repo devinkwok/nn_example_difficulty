@@ -12,9 +12,13 @@ def rank(metric: torch.Tensor):
             with values replaced by rank over last dimension $N$.
     """
     sorted_idx = torch.argsort(metric, dim=-1)
-    rank_idx = torch.arange(metric.shape[-1]).broadcast_to(sorted_idx.shape)
-    ranks = torch.empty_like(sorted_idx)
-    ranks = torch.scatter(ranks, dim=-1, index=sorted_idx, src=rank_idx)
+    return order_to_rank(sorted_idx)
+
+#TODO handle ties
+def order_to_rank(argsort_idx: torch.Tensor):
+    rank_idx = torch.arange(argsort_idx.shape[-1]).broadcast_to(argsort_idx.shape)
+    ranks = torch.empty_like(argsort_idx)
+    ranks = torch.scatter(ranks, dim=-1, index=argsort_idx, src=rank_idx)
     return ranks
 
 

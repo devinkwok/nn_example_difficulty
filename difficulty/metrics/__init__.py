@@ -5,3 +5,4 @@ from difficulty.metrics.representation import *
 from difficulty.metrics.other import *
 from difficulty.metrics.accumulator import *
 from difficulty.metrics.gradient import *
+from difficulty.metrics.ensemble import *

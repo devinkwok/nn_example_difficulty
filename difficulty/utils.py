@@ -27,12 +27,28 @@ def detach_tensors(tensors: Dict[str, torch.Tensor], to_cpu=True, to_numpy=False
     return apply(tensors, apply_fn=apply_detach)
 
 
-def average(metrics: Dict[str, torch.Tensor], dim=0) -> Dict[str, torch.Tensor]:
-    return apply(metrics, "avg", lambda x: torch.mean(x, dim=dim))
+def to_torch(metrics: Dict[str, torch.Tensor], dtype=torch.float64, prefix=None) -> Dict[str, torch.Tensor]:
+    return apply(metrics, prefix, lambda x: torch.tensor(x, dtype=get_dtype(dtype)))
 
 
-def last_metrics(metrics: Dict, dim=0) -> Dict[str, torch.Tensor]:
-    return apply(metrics, "last", lambda x: torch.index_select(x, dim=dim, index=[0]))
+def to_numpy(metrics: Dict[str, torch.Tensor], dtype=torch.float64, prefix=None) -> Dict[str, torch.Tensor]:
+    return apply(metrics, prefix, lambda x: x.to(dtype=get_dtype(dtype)).numpy())
+
+
+def stack_metrics(metrics: Dict[str, torch.Tensor], dim=0, prefix=None) -> Dict[str, torch.Tensor]:
+    return apply(metrics, prefix, lambda x: torch.stack(x, dim=dim))
+
+
+def average_metrics(metrics: Dict[str, torch.Tensor], dim=0, dtype=torch.float64, prefix="avg") -> Dict[str, torch.Tensor]:
+    return apply(metrics, prefix, lambda x: torch.mean(x.to(dtype=get_dtype(dtype)), dim=dim))
+
+
+def variance_metrics(metrics: Dict[str, torch.Tensor], dim=0, dtype=torch.float64, prefix="var") -> Dict[str, torch.Tensor]:
+    return apply(metrics, prefix, lambda x: torch.var(x.to(dtype=get_dtype(dtype)), dim=dim))
+
+
+def last_metrics(metrics: Dict[str, torch.Tensor], dim=0, prefix="last") -> Dict[str, torch.Tensor]:
+    return apply(metrics, prefix, lambda x: torch.index_select(x, dim=dim, index=[0]))
 
 
 def get_available_metrics(metric_dir: Path, include: List[str] = []):
