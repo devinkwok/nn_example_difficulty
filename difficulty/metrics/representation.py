@@ -4,6 +4,7 @@ import torch.nn as nn
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.cluster import KMeans
 
+from difficulty.metrics.pointwise import pointwise_metrics
 from difficulty.metrics.forget import first_unforgettable
 
 from difficulty.utils import detach_tensors
@@ -25,6 +26,7 @@ def representation_metrics(
         device="cuda",
         to_cpu=True,
         to_numpy=False,
+        generate_pointwise_metrics=False,
         named_modules: Iterable[Tuple[str, nn.Module]]=None,
         include: List[str]=None,
         exclude: List[str]=None,
@@ -38,7 +40,10 @@ def representation_metrics(
         selfproto_max_iter: int=300,
     ):
         generator = evaluate_intermediates(model, dataloader, device, named_modules, include, exclude, verbose)
-        _, intermediates, _, labels = combine_batches(generator)
+        _, intermediates, outputs, labels = combine_batches(generator)
+        metrics = {}
+        if generate_pointwise_metrics:
+            metrics = pointwise_metrics(outputs, labels, to_cpu=to_cpu, to_numpy=to_numpy)
 
         # use true labels as consensus labels if not set
         train_labels = labels if pd_train_labels is None else pd_train_labels
@@ -60,11 +65,14 @@ def representation_metrics(
         proto = supervised_prototypes(representations, labels)
         selfproto = self_supervised_prototypes(representations, k=selfproto_k, max_iter=selfproto_max_iter, random_state=selfproto_random_state)
 
-        return detach_tensors({
-             "pd": pd,
-             "proto": proto,
-             "selfproto": selfproto,
-        }, to_cpu=to_cpu, to_numpy=to_numpy)
+        metrics = {**metrics, **detach_tensors(
+            {
+                "pd": pd,
+                "proto": proto,
+                "selfproto": selfproto,
+            }, to_cpu=to_cpu, to_numpy=to_numpy)
+        }
+        return metrics
 
 
 def nearest_neighbour(representations: torch.Tensor, query_points: torch.Tensor, labels: torch.Tensor, k: int) -> torch.Tensor:

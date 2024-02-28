@@ -183,7 +183,7 @@ class TestModel(BaseTest):
 
     def test_representation_metrics(self):
         SEED = 42
-        _, y, _, _ = combine_batches(evaluate_intermediates(self.model, self.dataloader, device=self.device))
+        _, y, outputs, labels = combine_batches(evaluate_intermediates(self.model, self.dataloader, device=self.device))
 
         # use default values
         pd = prediction_depth(y, self.data_labels)
@@ -200,12 +200,14 @@ class TestModel(BaseTest):
         pd = prediction_depth(y, self.data_labels, y, 1 - self.data_labels, k=2)
         proto = supervised_prototypes(y['blocks.5.relu2.out'], self.data_labels)
         selfproto = self_supervised_prototypes(y['blocks.5.relu2.out'], k=10, random_state=SEED)
-        scores = representation_metrics(self.model, self.dataloader, device=self.device,
+        scores = representation_metrics(self.model, self.dataloader, device=self.device, generate_pointwise_metrics=True,
                                         pd_test_dataloader=test_dataloader, pd_k=2,
                                         proto_layer='blocks.5.relu2.out', selfproto_k=10, selfproto_random_state=SEED)
         self.all_close(scores["pd"], pd)
         self.all_close(scores["proto"], proto)
         self.all_close(scores["selfproto"], selfproto)
+        for k, v in pointwise_metrics(outputs, labels).items():
+            self.all_close(scores[k], v)
 
 
 if __name__ == '__main__':
