@@ -15,7 +15,7 @@ class TestModel(BaseTest):
             y = evaluate_intermediates(self.model, self.dataloader, device=self.device)
             input, hidden, output, labels = combine_batches(y)
             self.tensors_equal(input, self.data)
-            self.all_close(output, self.model(self.data))
+            self.all_close(output, self.model(self.data.to(device=self.device)))
             self.tensors_equal(labels, self.data_labels)
             layers = list(hidden.keys())
             self.tensors_equal(hidden[layers[0]], input)
@@ -94,8 +94,7 @@ class TestModel(BaseTest):
     def test_eval_model(self):
         y, _, _, _ = evaluate_model(self.model, self.dataloader, device=self.device)
         self.assertEqual(len(y), self.n)
-        self.all_close(y, self.model(self.data))
-        y, _, _, _ = evaluate_model(self.model, self.dataloader, device=self.device)
+        self.all_close(y, self.model(self.data.to(device=self.device)))
 
     def subset_pd_intermediates(self, intermediates):
         return [v for k, v in intermediates.items() if "relu" in k]
