@@ -70,6 +70,7 @@ class BaseTest(unittest.TestCase):
         self.dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, drop_last=False)
         self.model = Model.create()
         self.tmp_file = Path(f"difficulty/test/TEMP_TEST_DATA/{type(self).__name__}_save_file.npz")
+        self.tmp_file.parent.mkdir(parents=True, exist_ok=True)
         self.n_inputs = torch.prod(torch.tensor(self.data.shape[1:]))
         self.n_outputs = 10
         self.epsilon = 1e-6
@@ -102,5 +103,13 @@ class BaseTest(unittest.TestCase):
 
     def all_close(self, X, Y):
         # this test is more forgiving to account for gpu noise and low precision
-        torch.testing.assert_close(X + self.epsilon, Y + self.epsilon,
+        if isinstance(X, torch.Tensor):
+            X = X.detach().cpu()
+        if isinstance(Y, torch.Tensor):
+            Y = Y.detach().cpu()
+        torch.testing.assert_close(X + self.epsilon,
+                                   Y + self.epsilon,
                                    atol=1e-5, rtol=1e-4, equal_nan=True, check_dtype=False)
+
+    def tensors_equal(self, X, Y):
+        npt.assert_array_equal(X.detach().cpu().numpy(), Y.detach().cpu().numpy())

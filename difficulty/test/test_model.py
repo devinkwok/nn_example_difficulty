@@ -14,12 +14,12 @@ class TestModel(BaseTest):
         with torch.no_grad():
             y = evaluate_intermediates(self.model, self.dataloader, device=self.device)
             input, hidden, output, labels = combine_batches(y)
-            npt.assert_array_equal(input, self.data)
+            self.tensors_equal(input, self.data)
             self.all_close(output, self.model(self.data))
-            npt.assert_array_equal(labels, self.data_labels)
+            self.tensors_equal(labels, self.data_labels)
             layers = list(hidden.keys())
-            npt.assert_array_equal(hidden[layers[0]], input)
-            npt.assert_array_equal(hidden[layers[-1]], output)
+            self.tensors_equal(hidden[layers[0]], input)
+            self.tensors_equal(hidden[layers[-1]], output)
             [self.assertEqual(len(v), self.n) for v in hidden.values()]
             npt.assert_array_equal(list(hidden.keys()),
                 ['conv.in',                 # input
@@ -79,8 +79,8 @@ class TestModel(BaseTest):
             first_module, *_  = self.model.named_modules()
             y = evaluate_intermediates(self.model, self.dataloader, device=self.device, named_modules=[first_module])
             _, hidden, _, _ = combine_batches(y)
-            npt.assert_array_equal(hidden['.in'], input)
-            npt.assert_array_equal(hidden['.out'], output)
+            self.tensors_equal(hidden['.in'], input)
+            self.tensors_equal(hidden['.out'], output)
             npt.assert_array_equal(list(hidden.keys()), ['.in', '.out'])
             # include selected layers
             y = evaluate_intermediates(self.model, self.dataloader, device=self.device, include=["fc"])
@@ -123,13 +123,13 @@ class TestModel(BaseTest):
         # check that classifying the training points with k=1 is always identical to training labels
         pd = prediction_depth(intermediates, self.data_labels, intermediates, self.data_labels, k=1)
         self.assertEqual(pd.shape, (self.n,))
-        npt.assert_array_equal(pd, torch.zeros_like(pd))  # always correct
+        self.tensors_equal(pd, torch.zeros_like(pd))  # always correct
         # flipping labels makes prediction depth always the max
         pd = prediction_depth(intermediates, 1 - self.data_labels, intermediates, self.data_labels, k=1)
-        npt.assert_array_equal(pd, torch.full_like(pd, len(intermediates)))
+        self.tensors_equal(pd, torch.full_like(pd, len(intermediates)))
         # check that dict input works, and omitting test points classifies training points
         pd = prediction_depth(y, self.data_labels, k=1)
-        npt.assert_array_equal(pd, torch.zeros_like(pd))
+        self.tensors_equal(pd, torch.zeros_like(pd))
 
         # check classification in an artificial task
         # train points are fixed at 0 and 1 in all layers
@@ -140,7 +140,7 @@ class TestModel(BaseTest):
         labels = torch.ones(4)
         right_shift = [test_points + i*0.2 for i in range(3)]
         pd = prediction_depth(train_points, train_labels, right_shift, labels, k=1)
-        npt.assert_array_equal(pd, [3, 2, 1, 0])
+        self.tensors_equal(pd, torch.tensor([3, 2, 1, 0]))
 
     def test_prototypes(self):
         _, y, _, _ = combine_batches(evaluate_intermediates(

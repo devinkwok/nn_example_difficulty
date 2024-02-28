@@ -211,11 +211,13 @@ def self_supervised_prototypes(representations: torch.Tensor, k: int=30, max_ite
         torch.Tensor: distance from examples to cluster centroids (self-supervised prototypes)
             in representation space, of shape (N,)
     """
-    representations = representations.reshape(representations.shape[0], -1)
+    dtype = representations.dtype
+    device = representations.device
+    representations = representations.reshape(representations.shape[0], -1).detach().cpu().numpy()
     kmeans = KMeans(n_clusters=k, max_iter=max_iter, random_state=random_state)
-    kmeans.fit(representations.detach().cpu().numpy())
+    kmeans.fit(representations)
     distances = kmeans.transform(representations)
-    distances = torch.tensor(distances, dtype=representations.dtype, device=representations.device)
+    distances = torch.tensor(distances, dtype=dtype, device=device)
     distance_to_nearest_centroid = torch.min(distances, dim=-1).values
     if return_kmeans_obj:
         return distance_to_nearest_centroid, kmeans
