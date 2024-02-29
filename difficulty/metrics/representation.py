@@ -75,15 +75,6 @@ def representation_metrics(
         return metrics
 
 
-def nearest_neighbour(representations: torch.Tensor, query_points: torch.Tensor, labels: torch.Tensor, k: int) -> torch.Tensor:
-    knn = KNeighborsClassifier(k)  # use standard Euclidean distance
-    representations = representations.reshape(representations.shape[0], -1).detach().cpu().numpy()
-    query_points = query_points.reshape(query_points.shape[0], -1).detach().cpu().numpy()
-    knn.fit(query_points, labels.detach().cpu().numpy())
-    predictions = knn.predict(representations)
-    return torch.tensor(predictions).to(dtype=labels.dtype, device=labels.device)
-
-
 class PredictionDepth:
     def __init__(self,
             intermediate_activations: Iterable,
@@ -114,6 +105,26 @@ class PredictionDepth:
     def _dict_to_list(iterable: Iterable):
         return iterable.values() if isinstance(iterable, dict) else iterable
 
+    def knn_predict(self, intermediates: Iterable, labels: torch.Tensor) -> torch.Tensor:
+        """Get prediction at each layer for example, label pairs.
+
+        Args:
+            intermediates (Iterable): list or ordered dict of L activations by layer on which to compute prediction depth.
+                Activations have shape (N, ...) where N is number of examples, and remaining dimensions are flattened.
+            labels (torch.Tensor): labels to compare against KNN predictions, with shape (N,)
+                In Baldock et al. (2021), these are set to the predictions of a majority of ensembled models.
+
+        Returns:
+            torch.Tensor: boolean prediction accuracies of shape (L, N)
+        """
+        knn_predictions = []
+        for x, knn in zip(self._dict_to_list(intermediates), self.knns):
+            predictions = knn.predict(x.reshape(x.shape[0], -1).detach().cpu().numpy())
+            predictions = torch.tensor(predictions).to(dtype=labels.dtype, device=labels.device)
+            knn_predictions.append(predictions)
+        # dims L \times C where L is intermediate layers, C is classes
+        return torch.stack(knn_predictions, dim=0)
+
     def predict(self, intermediates: Iterable, labels: torch.Tensor) -> torch.Tensor:
         """Get prediction depth for example, label pairs.
 
@@ -126,13 +137,7 @@ class PredictionDepth:
         Returns:
             torch.Tensor: prediction depths of shape (N,) (note: this is NOT backprop-enabled)
         """
-        knn_predictions = []
-        for x, knn in zip(self._dict_to_list(intermediates), self.knns):
-            predictions = knn.predict(x.reshape(x.shape[0], -1).detach().cpu().numpy())
-            predictions = torch.tensor(predictions).to(dtype=labels.dtype, device=labels.device)
-            knn_predictions.append(predictions)
-        # dims L \times C where L is intermediate layers, C is classes
-        layer_predict = torch.stack(knn_predictions, dim=0)
+        layer_predict = self.knn_predict(intermediates, labels)
         match = (layer_predict == labels.broadcast_to(layer_predict.shape))
         return first_unforgettable(match)
 
