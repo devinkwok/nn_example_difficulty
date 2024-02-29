@@ -1,7 +1,6 @@
 # metrics that are computed over multiple runs
 from typing import Dict, Iterable
 from pathlib import Path
-import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -14,8 +13,7 @@ from difficulty.model.eval import evaluate_model
 __all__ = [
     "ensemble_metrics",
     "OnlineConsensusLabels",
-    "OnlineAccuracy",
-    "load_influence_memorization",
+    "OnlineEnsembleAccuracy",
 ]
 
 
@@ -26,7 +24,7 @@ def ensemble_metrics(
         device="cuda"
     ):
     # mean accuracy, ddd
-    accuracies = OnlineAccuracy()
+    accuracies = OnlineEnsembleAccuracy()
     consensus_labels = OnlineConsensusLabels(n_class)
     for model in models:
         eval_logits, _, acc, _ = evaluate_model(model, dataloader, device=device, return_accuracy=True)
@@ -34,12 +32,15 @@ def ensemble_metrics(
         consensus_labels.add(eval_logits)
     #TODO conf, agr
     return {
+        "ddd": accuracies.dichotomous_data_difficulty(),
         "allacc": accuracies.get(),
         "consensuslabel": consensus_labels.get(),
     }
 
 
-class OnlineAccuracy(OnlineMean):
+class OnlineEnsembleAccuracy(OnlineMean):
+    """Includes dichtomous data difficulty score: this is only meaningful when computed over different models.
+    """
 
     def get_always_learned(self):
         return self.get() == 1
@@ -88,20 +89,3 @@ class OnlineConsensusLabels(Accumulator):
 #TODO mean confidence, conf in Carlini et al.
 
 #TODO jensen shannon divergence, agr in Carlini et al.
-
-
-def load_influence_memorization(dataset="cifar100"):
-    """
-    Load precomputed influence and memorization scores from:
-
-    Feldman, V., & Zhang, C. (2020).
-    What neural networks memorize and why: Discovering the long tail via influence estimation.
-    Advances in Neural Information Processing Systems, 33, 2881-2891.
-    """
-    # get path to data relative to this file
-    path = Path(__file__).parent.parent / "precomputed" / "influence_and_memorization_feldman_zhang"
-    if dataset == "cifar100":
-        data = np.load(path / "cifar100_high_infl_pairs_infl0.15_mem0.25.npz")
-        return data['tr_idx'], data['tt_idx'], data['infl'], data['mem']
-    else:
-        raise ValueError(f"Unrecognized dataset {dataset}")
