@@ -1,4 +1,5 @@
-from typing import List, Iterable, Tuple
+from itertools import chain
+from typing import List, Iterable, Tuple, Optional
 import torch
 import torch.nn as nn
 from sklearn.neighbors import KNeighborsClassifier
@@ -32,6 +33,7 @@ def representation_metrics(
         exclude: List[str]=None,
         verbose=False,
         pd_k: int=30,
+        pd_append_softmax: bool=False,
         pd_train_labels: torch.Tensor=None,
         pd_test_dataloader: torch.utils.data.DataLoader=None,
         proto_layer: str=None,
@@ -41,21 +43,23 @@ def representation_metrics(
     ):
         generator = evaluate_intermediates(model, dataloader, device, named_modules, include, exclude, verbose)
         _, intermediates, outputs, labels = combine_batches(generator)
+        outputs = outputs if pd_append_softmax else None
         metrics = {}
         if generate_pointwise_metrics:
             metrics = pointwise_metrics(outputs, labels, to_cpu=to_cpu, to_numpy=to_numpy)
 
         # use true labels as consensus labels if not set
         train_labels = labels if pd_train_labels is None else pd_train_labels
-        pd_obj = PredictionDepth(intermediates, train_labels, k=pd_k)
+        pd_obj = PredictionDepth(intermediates, train_labels, outputs, k=pd_k)
         # compute prediction depth on knn training data if test data not provided
         if pd_test_dataloader is None:
-            pd = pd_obj(intermediates, train_labels)
+            pd = pd_obj(intermediates, train_labels, outputs)
         else:
             pd = []
             test_generator = evaluate_intermediates(model, pd_test_dataloader, device, named_modules, include, exclude, verbose)
-            for _, test_intermediates, _, test_labels in test_generator:
-                pd.append(pd_obj(test_intermediates, test_labels))
+            for _, test_intermediates, test_outputs, test_labels in test_generator:
+                test_outputs = test_outputs if pd_append_softmax else None
+                pd.append(pd_obj(test_intermediates, test_labels, test_outputs))
             pd = torch.cat(pd, dim=0)
 
         # use last layer of intermediates as representation by default
@@ -79,7 +83,8 @@ class PredictionDepth:
     def __init__(self,
             intermediate_activations: Iterable,
             consensus_labels: torch.Tensor,
-            k: int=30
+            output_for_softmax: Optional[torch.Tensor]=None,
+            k: int=30,
     ) -> None:
         """From
         Baldock, R., Maennel, H., and Neyshabur, B. (2021).
@@ -91,21 +96,28 @@ class PredictionDepth:
                 with shape (M, ...). In Baldock et al. (2021), these are the entire training dataset.
             consensus_labels (torch.Tensor): labels used to fit the KNN, with shape (M,)
                 In Baldock et al. (2021), these are the consensus labels of the knn_activations.
+            output_for_softmax (Optional[torch.Tensor]): if set, output tensor to compute
+                softmax over and append to intermediate activations. Defaults to None.
             k (int, optional): number of neighbours to compare in k-nearest neighbours. Defaults to 30.
         """
+        self.include_softmax = (output_for_softmax is None)
         labels = consensus_labels.detach().cpu().numpy()
         self.knns = []
-        for intermediates in self._dict_to_list(intermediate_activations):
+        intermediates = self._list_and_softmax(intermediate_activations, output_for_softmax)
+        for x in intermediates:
             knn = KNeighborsClassifier(k)  # use standard Euclidean distance
-            intermediates = intermediates.reshape(intermediates.shape[0], -1).detach().cpu().numpy()
-            knn.fit(intermediates, labels)
+            x = x.reshape(x.shape[0], -1).detach().cpu().numpy()
+            knn.fit(x, labels)
             self.knns.append(knn)
 
     @staticmethod
-    def _dict_to_list(iterable: Iterable):
-        return iterable.values() if isinstance(iterable, dict) else iterable
+    def _list_and_softmax(intermediates: torch.Tensor, output_for_softmax: Optional[torch.Tensor]):
+        intermediates = intermediates.values() if isinstance(intermediates, dict) else intermediates
+        if output_for_softmax is not None:
+            return chain(intermediates, [torch.nn.functional.softmax(output_for_softmax, dim=-1)])
+        return intermediates
 
-    def knn_predict(self, intermediates: Iterable, labels: torch.Tensor) -> torch.Tensor:
+    def knn_predict(self, intermediates: Iterable, labels: torch.Tensor, output_for_softmax: Optional[torch.Tensor]=None) -> torch.Tensor:
         """Get prediction at each layer for example, label pairs.
 
         Args:
@@ -113,19 +125,24 @@ class PredictionDepth:
                 Activations have shape (N, ...) where N is number of examples, and remaining dimensions are flattened.
             labels (torch.Tensor): labels to compare against KNN predictions, with shape (N,)
                 In Baldock et al. (2021), these are set to the predictions of a majority of ensembled models.
+            output_for_softmax (Optional[torch.Tensor]): if set, output tensor to compute
+                softmax over and append to intermediate activations. Defaults to None.
 
         Returns:
             torch.Tensor: boolean prediction accuracies of shape (L, N)
         """
+        if self.include_softmax:
+            assert output_for_softmax is not None
         knn_predictions = []
-        for x, knn in zip(self._dict_to_list(intermediates), self.knns):
+        intermediates = self._list_and_softmax(intermediates, output_for_softmax)
+        for x, knn in zip(intermediates, self.knns):
             predictions = knn.predict(x.reshape(x.shape[0], -1).detach().cpu().numpy())
             predictions = torch.tensor(predictions).to(dtype=labels.dtype, device=labels.device)
             knn_predictions.append(predictions)
         # dims L \times C where L is intermediate layers, C is classes
         return torch.stack(knn_predictions, dim=0)
 
-    def predict(self, intermediates: Iterable, labels: torch.Tensor) -> torch.Tensor:
+    def predict(self, intermediates: Iterable, labels: torch.Tensor, output_for_softmax: Optional[torch.Tensor]=None) -> torch.Tensor:
         """Get prediction depth for example, label pairs.
 
         Args:
@@ -137,12 +154,12 @@ class PredictionDepth:
         Returns:
             torch.Tensor: prediction depths of shape (N,) (note: this is NOT backprop-enabled)
         """
-        layer_predict = self.knn_predict(intermediates, labels)
+        layer_predict = self.knn_predict(intermediates, labels, output_for_softmax=output_for_softmax)
         match = (layer_predict == labels.broadcast_to(layer_predict.shape))
         return first_unforgettable(match)
 
-    def __call__(self, intermediate_activations, labels):
-        return self.predict(intermediate_activations, labels)
+    def __call__(self, intermediate_activations, labels, output_for_softmax=None):
+        return self.predict(intermediate_activations, labels, output_for_softmax)
 
 
 def prediction_depth(
@@ -150,6 +167,8 @@ def prediction_depth(
         train_labels: torch.Tensor,
         test_intermediates: Iterable=None,
         test_labels: torch.Tensor=None,
+        train_outputs: Optional[torch.Tensor]=None,
+        test_outputs: Optional[torch.Tensor]=None,
         k: int=30
 ) -> torch.Tensor:
     """Functional equivalent of PredictionDepth. Use this function for a single call,
@@ -167,15 +186,20 @@ def prediction_depth(
         test_labels (torch.Tensor): labels to compare against KNN predictions, with shape (N,)
             In Baldock et al. (2021), these are set to the predictions of a majority of ensembled models.
             If not set, use train_labels. Default is None.
+        train_outputs (Optional[torch.Tensor]): if set, output tensor to compute
+            softmax over and append to train_intermediates. Defaults to None.
+        test_outputs (Optional[torch.Tensor]): if set, output tensor to compute
+            softmax over and append to test_intermediates. Defaults to None.
         k (int, optional): number of neighbours to compare in k-nearest neighbours. Defaults to 30.
 
     Returns:
         torch.Tensor: prediction depths of shape (N,) (note: this is NOT backprop-enabled)
     """
-    pd_object = PredictionDepth(train_intermediates, train_labels, k)
+    pd_object = PredictionDepth(train_intermediates, train_labels, output_for_softmax=train_outputs, k=k)
     test_intermediates = train_intermediates if test_intermediates is None else test_intermediates
     test_labels = train_labels if test_labels is None else test_labels
-    return pd_object(test_intermediates, test_labels)
+    test_outputs = train_outputs if test_outputs is None else test_outputs
+    return pd_object(test_intermediates, test_labels, output_for_softmax=test_outputs)
 
 
 def supervised_prototypes(representations: torch.Tensor, labels: torch.Tensor):
