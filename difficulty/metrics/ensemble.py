@@ -4,15 +4,15 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from difficulty.metrics.accumulator import Accumulator
-from difficulty.metrics import OnlineMean
+
+from difficulty.metrics.accumulator import Accumulator, OnlineMean
 from difficulty.model.eval import evaluate_model
 
 
 __all__ = [
     "ensemble_metrics",
     "OnlineConsensusLabels",
-    "OnlineAccuracy",
+    "OnlineEnsembleAccuracy",
 ]
 
 
@@ -23,7 +23,7 @@ def ensemble_metrics(
         device="cuda"
     ):
     # mean accuracy, ddd
-    accuracies = OnlineAccuracy()
+    accuracies = OnlineEnsembleAccuracy()
     consensus_labels = OnlineConsensusLabels(n_class)
     for model in models:
         eval_logits, _, acc, _ = evaluate_model(model, dataloader, device=device, return_accuracy=True)
@@ -31,12 +31,15 @@ def ensemble_metrics(
         consensus_labels.add(eval_logits)
     #TODO conf, agr
     return {
+        "ddd": accuracies.dichotomous_data_difficulty(),
         "allacc": accuracies.get(),
         "consensuslabel": consensus_labels.get(),
     }
 
 
-class OnlineAccuracy(OnlineMean):
+class OnlineEnsembleAccuracy(OnlineMean):
+    """Includes dichtomous data difficulty score: this is only meaningful when computed over different models.
+    """
 
     def get_always_learned(self):
         return self.get() == 1

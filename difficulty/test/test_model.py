@@ -101,10 +101,11 @@ class TestModel(BaseTest):
 
     def test_prediction_depth(self):
         # check that outputs are correct shape and ranges
-        _, y, _, _ = combine_batches(evaluate_intermediates(self.model, self.dataloader, device=self.device))
+        _, y, out, _ = combine_batches(evaluate_intermediates(self.model, self.dataloader, device=self.device))
         intermediates = self.subset_pd_intermediates(y)
         train_data = [v[:self.n // 2] for v in intermediates]
         train_labels = self.data_labels[:self.n // 2]
+        train_out = out[:self.n // 2]
         pd = prediction_depth(train_data, train_labels, intermediates, self.data_labels, k=2)
         self.assertEqual(pd.shape, (self.n,))
         self.assertTrue(torch.all(0 <= pd))
@@ -118,6 +119,11 @@ class TestModel(BaseTest):
             x = self.subset_pd_intermediates(x)
             obj_outputs.append(pd_obj(x, labels))
         self.all_close(torch.cat(obj_outputs, dim=0), pd)
+
+        # check that softmax of outputs is appended
+        pd = prediction_depth(train_data, train_labels, intermediates, self.data_labels,
+                              train_outputs=train_out, test_outputs=out, k=2)
+        self.assertTrue(torch.any(pd > len(intermediates)))
 
         # check that classifying the training points with k=1 is always identical to training labels
         pd = prediction_depth(intermediates, self.data_labels, intermediates, self.data_labels, k=1)
@@ -196,11 +202,12 @@ class TestModel(BaseTest):
 
         # use non-defaults
         test_dataloader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(self.data, 1 - self.data_labels))
-        pd = prediction_depth(y, self.data_labels, y, 1 - self.data_labels, k=2)
+        y_softmax = list(y.values()) + [torch.nn.functional.softmax(representation, dim=-1)]
+        pd = prediction_depth(y_softmax, self.data_labels, y_softmax, 1 - self.data_labels, k=2)
         proto = supervised_prototypes(y['blocks.5.relu2.out'], self.data_labels)
         selfproto = self_supervised_prototypes(y['blocks.5.relu2.out'], k=10, random_state=SEED)
         scores = representation_metrics(self.model, self.dataloader, device=self.device, generate_pointwise_metrics=True,
-                                        pd_test_dataloader=test_dataloader, pd_k=2,
+                                        pd_append_softmax=True, pd_test_dataloader=test_dataloader, pd_k=2,
                                         proto_layer='blocks.5.relu2.out', selfproto_k=10, selfproto_random_state=SEED)
         self.all_close(scores["pd"], pd)
         self.all_close(scores["proto"], proto)
