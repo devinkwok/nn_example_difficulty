@@ -5,8 +5,7 @@ import torch
 import torch.nn.functional as F
 
 
-from difficulty.metrics.accumulator import Accumulator
-from difficulty.metrics import OnlineMean
+from difficulty.metrics.accumulator import Accumulator, OnlineMean
 from difficulty.model.eval import evaluate_model
 
 

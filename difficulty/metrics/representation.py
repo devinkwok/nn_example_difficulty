@@ -100,7 +100,7 @@ class PredictionDepth:
                 softmax over and append to intermediate activations. Defaults to None.
             k (int, optional): number of neighbours to compare in k-nearest neighbours. Defaults to 30.
         """
-        self.include_softmax = (output_for_softmax is None)
+        self.include_softmax = (output_for_softmax is not None)
         labels = consensus_labels.detach().cpu().numpy()
         self.knns = []
         intermediates = self._list_and_softmax(intermediate_activations, output_for_softmax)
@@ -131,8 +131,7 @@ class PredictionDepth:
         Returns:
             torch.Tensor: boolean prediction accuracies of shape (L, N)
         """
-        if self.include_softmax:
-            assert output_for_softmax is not None
+        assert (output_for_softmax is None) == (False if self.include_softmax else True)
         knn_predictions = []
         intermediates = self._list_and_softmax(intermediates, output_for_softmax)
         for x, knn in zip(intermediates, self.knns):
