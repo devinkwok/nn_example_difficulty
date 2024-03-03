@@ -19,12 +19,11 @@ __all__ = [
 def ensemble_metrics(
         models: Iterable[callable],
         dataloader: torch.utils.data.DataLoader,
-        n_class: int,
         device="cuda"
     ):
     # mean accuracy, ddd
     accuracies = OnlineEnsembleAccuracy()
-    consensus_labels = OnlineConsensusLabels(n_class)
+    consensus_labels = OnlineConsensusLabels()
     for model in models:
         eval_logits, _, acc, _ = evaluate_model(model, dataloader, device=device, return_accuracy=True)
         accuracies.add(acc)
@@ -68,7 +67,7 @@ class OnlineConsensusLabels(Accumulator):
         super().save(file, class_count=self.class_count)
 
     def add(self, eval_logits: torch.Tensor, dim=None, class_dim=-1, **metadata):
-        super()._add(eval_logits, **metadata)
+        super()._add(eval_logits, **metadata)  # don't take eval_logits from super as we don't want it as torch.long
         eval_logits = eval_logits.to(device=self.device)
         predicted = F.one_hot(torch.argmax(eval_logits, dim=class_dim),
                               num_classes=eval_logits.shape[class_dim])

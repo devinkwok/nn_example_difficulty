@@ -21,21 +21,23 @@ class TestMetrics(BaseTest):
         self.consensus_labels, _ = torch.mode(torch.argmax(self.random_logits, dim=-1), dim=0)
 
     def test_consensus_labels(self):
-        obj = OnlineConsensusLabels(class_count=10, device=self.device)
+        obj = OnlineConsensusLabels(device=self.device)
         for i, run in enumerate(self.random_logits):
             obj.add(run)
             if i % 5 == 0:
                 obj.save(self.tmp_file)
                 obj = OnlineConsensusLabels.load(self.tmp_file)
-        self.tensors_equal(obj.get(), self.consensus_labels)
+        consensus_labels = obj.get()
+        self.assertEqual(consensus_labels.shape, (len(self.data),))
+        self.tensors_equal(consensus_labels, self.consensus_labels)
 
     def test_ensemble_metrics(self):
-        scores = ensemble_metrics(self.models, self.dataloader, self.n_class, self.device)
+        scores = ensemble_metrics(self.models, self.dataloader, self.device)
         acc = torch.mean((self.data_labels == torch.argmax(self.random_logits, dim=-1)).to(dtype=float), dim=0)
         self.all_close(scores["allacc"], acc)
         self.tensors_equal(scores["consensuslabel"], self.consensus_labels)
-        self.tensors_equal(scores["ddd"] == 1, torch.all(acc == 1, dim=0))
-        self.tensors_equal(scores["ddd"] == -1, torch.all(acc == 0, dim=0))
+        self.tensors_equal(scores["ddd"] == 1, acc == 1)
+        self.tensors_equal(scores["ddd"] == -1, acc == 0)
 
 
 if __name__ == '__main__':
