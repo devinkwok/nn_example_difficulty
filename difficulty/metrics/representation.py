@@ -9,7 +9,7 @@ from difficulty.metrics.pointwise import pointwise_metrics
 from difficulty.metrics.forget import first_unforgettable
 
 from difficulty.utils import detach_tensors
-from difficulty.model.eval import evaluate_intermediates, combine_batches
+from difficulty.model.eval import evaluate_intermediates, find_intermediate_layers, combine_batches
 
 
 __all__ = [
@@ -28,10 +28,8 @@ def representation_metrics(
         to_cpu=True,
         to_numpy=False,
         generate_pointwise_metrics=False,
-        named_modules: Iterable[Tuple[str, nn.Module]]=None,
-        include: List[str]=None,
-        exclude: List[str]=None,
         verbose=False,
+        pd_layers: List[str]=None,
         pd_k: int=30,
         pd_append_softmax: bool=False,
         pd_train_labels: torch.Tensor=None,
@@ -41,30 +39,43 @@ def representation_metrics(
         selfproto_random_state: int=None,
         selfproto_max_iter: int=300,
     ):
-        generator = evaluate_intermediates(model, dataloader, device, named_modules, include, exclude, verbose)
+        if pd_layers is None:  # include all layers
+            pd_layers = find_intermediate_layers(model, next(iter(dataloader))[0].shape[1:], device=device)
+        # include proto_layer to get intermediates for both prediction depth and (self) supervised prototypes
+        append_proto_layer = (pd_layers is not None) and (proto_layer is not None) and (proto_layer not in pd_layers)
+        
+        proto_layers = [proto_layer] if append_proto_layer else []
+        generator = evaluate_intermediates(model, dataloader, pd_layers + proto_layers, device=device, verbose=verbose)
         _, intermediates, outputs, labels = combine_batches(generator)
         outputs = outputs if pd_append_softmax else None
         metrics = {}
+
+        # generate other metrics here using model eval outputs
         if generate_pointwise_metrics:
             metrics = pointwise_metrics(outputs, labels, to_cpu=to_cpu, to_numpy=to_numpy)
 
+        # remove proto_layer from intermediates if it shouldn't be included
+        pd_intermediates = dict(intermediates)
+        if append_proto_layer:
+            del pd_intermediates[proto_layer]
         # use true labels as consensus labels if not set
         train_labels = labels if pd_train_labels is None else pd_train_labels
-        pd_obj = PredictionDepth(intermediates, train_labels, outputs, k=pd_k)
+        pd_obj = PredictionDepth(pd_intermediates, train_labels, outputs, k=pd_k)
         # compute prediction depth on knn training data if test data not provided
         if pd_test_dataloader is None:
-            pd = pd_obj(intermediates, train_labels, outputs)
+            pd = pd_obj(pd_intermediates, train_labels, outputs)
         else:
             pd = []
-            test_generator = evaluate_intermediates(model, pd_test_dataloader, device, named_modules, include, exclude, verbose)
+            # use pd_layers so that we don't include proto_layer
+            test_generator = evaluate_intermediates(model, pd_test_dataloader, pd_layers, device=device, verbose=verbose)
             for _, test_intermediates, test_outputs, test_labels in test_generator:
                 test_outputs = test_outputs if pd_append_softmax else None
                 pd.append(pd_obj(test_intermediates, test_labels, test_outputs))
             pd = torch.cat(pd, dim=0)
 
-        # use last layer of intermediates as representation by default
+        # for prototypes, use last layer as representation by default
         if proto_layer is None:
-            *_, proto_layer = intermediates.keys()
+            proto_layer = pd_layers[-1]
         representations = intermediates[proto_layer]
         proto = supervised_prototypes(representations, labels)
         selfproto = self_supervised_prototypes(representations, k=selfproto_k, max_iter=selfproto_max_iter, random_state=selfproto_random_state)

@@ -2,7 +2,7 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from collections import OrderedDict
-from typing import Iterable, List, Tuple, Dict, Generator, Optional
+from typing import Iterable, List, Set, Tuple, Dict, Generator, Optional
 import torch
 import torch.nn as nn
 
@@ -11,22 +11,14 @@ def is_identity(x: torch.tensor, y: torch.tensor):
     return len(x.flatten()) == len(y.flatten()) and torch.all(x.flatten() == y.flatten())
 
 
-def match_key(key: str, include: List[str] = None, exclude: List[str] = None):
-    if include is not None:
-        if not any(k in key for k in include):
-            return False
-    if exclude is not None:
-        if any(k in key for k in exclude):
-            return False
-    return True
-
-
 class SaveIntermediateHook:
     def __init__(self,
         named_modules: Iterable[Tuple[str,
         nn.Module]],
+        layers: List[str]=None,
         include: List[str]=None,
         exclude: List[str]=None,
+        no_duplicates: bool=True,
         device='cpu',
         verbose=False
     ):
@@ -42,25 +34,45 @@ class SaveIntermediateHook:
             for x in data:
                 with intermediates as hidden:
                     model(x)
-                    yield hidden  # do not place this outside of context manager, or else hidden will be reset!
+                    yield hidden
             ```
 
         Args:
             named_modules (Iterable[Tuple[str, nn.Module]]): modules to add hook to.
+            layers (Set[str], optional): If set, only include these exact layer names. A layer name
+                is the module name followed by ".in" or ".out" indicating the input or output to the module.
+                If set, ignores include, exclude, and assumes no_duplicates=False. Defaults to None.
             include (List[str], optional): If set, only include modules with names
                 containing at least one of these patterns. Defaults to None.
             exclude (List[str], optional): If set, exclude any modules with names
                 containing any of these patterns. Defaults to None.
+            no_duplicates (bool): If True, do not save any copies of the same layer
+                (comparison ignores shape, but preserves dim order). Defaults to True.
             device (str, optional): Device to move intermediates to. Defaults to 'cpu'.
             verbose (bool, optional): Warn when two intermediates are identical and one is discarded.
                 This occurs often when modules are nested. Defaults to False.
         """
-        self.named_modules = list(named_modules)
         self.device = device
-        self.include = include
-        self.exclude = exclude
+        if layers is not None:
+            self.layers = set(layers)
+            self.named_modules = self.filter_modules(layers, list(named_modules))
+            self.include = None
+            self.exclude = None
+            self.no_duplicates = False
+        else:
+            self.layers = None
+            self.named_modules = list(named_modules)
+            self.include = include
+            self.exclude = exclude
+            self.no_duplicates = no_duplicates
         self.verbose = verbose
         self.intermediates = OrderedDict()
+
+    @staticmethod
+    def filter_modules(layers, named_modules):
+        # remove .in and .out from layer names, return modules with these names
+        module_names = set(x[:-3] if x.endswith(".in") else x[:-4] for x in layers)
+        return [(k, v) for k, v in named_modules if k in module_names]
 
     def __enter__(self):
         self.module_names = OrderedDict()
@@ -82,31 +94,50 @@ class SaveIntermediateHook:
         self._add_if_missing(layer_name + ".out", return_val)
 
     def _add_if_missing(self, key, value):
-        # copy to prevent value from changing in later operations
-        if match_key(key, self.include, self.exclude):
+        # copy value to prevent it from changing in later operations
+        if self.layers is None:
+            if match_key(key, self.include, self.exclude):
+                value = value.detach().clone().to(device=self.device)
+                if self.no_duplicates:
+                    for k, v in self.intermediates.items():
+                        if is_identity(v, value):
+                            if self.verbose: warnings.warn(f"{key} and {k} are equal, omitting {key}")
+                            return
+                assert key not in self.intermediates, key
+                self.intermediates[key] = value
+        elif key in self.layers:  # ignore include, exclude, and no_duplicates
             value = value.detach().clone().to(device=self.device)
-            for k, v in self.intermediates.items():
-                if is_identity(v, value):
-                    if self.verbose: warnings.warn(f"{key} and {k} are equal, omitting {key}")
-                    return
             assert key not in self.intermediates, key
             self.intermediates[key] = value
 
 
-def evaluate_intermediates(
+def match_key(key: str, include: List[str] = None, exclude: List[str] = None):
+    if include is not None:
+        if not any(k in key for k in include):
+            return False
+    if exclude is not None:
+        if any(k in key for k in exclude):
+            return False
+    return True
+
+
+def find_intermediate_layers(
         model: nn.Module,
-        dataloader: torch.utils.data.DataLoader,
+        input_shape: Tuple[int],
+        n_test_points: int=100,
+        dtype=torch.float32,
         device: str="cuda",
         named_modules: Iterable[Tuple[str, nn.Module]]=None,
         include: List[str]=None,
         exclude: List[str]=None,
         verbose=False,
-) -> Generator:
-    """Evaluate a model on a dataloader, returning inputs, intermediate values, outputs, and labels
+    ):
+    """Use random data to determine which layers have distinct intermediate values in a model.
 
     Args:
         model (nn.Module): Model to evaluate.
-        dataloader (torch.utils.data.DataLoader): Dataloader containing data to evaluate on.
+        input_shape (Tuple[int]): shape of input tensor, excluding batch dimension.
+        n_test_points (int): how many random data points to generate as input.
         device (str, optional): Device to evaluate on. Defaults to "cuda".
         named_modules (Iterable[Tuple[str, nn.Module]], optional): If set,
             only get intermediates values from these modules,
@@ -118,23 +149,64 @@ def evaluate_intermediates(
         device (str, optional): Device to move intermediates to. Defaults to 'cpu'.
         verbose (bool, optional): Warn when two intermediates are identical and one is discarded.
             This occurs often when modules are nested. Defaults to False.
+    """
+    with torch.no_grad():
+        if named_modules is None:  # model.named_modules() returns generator, make into list so it's reusable
+            named_modules = list(model.named_modules())
+        random_input = torch.randn((n_test_points, *input_shape), dtype=dtype, device=device)
+
+        model.to(device=device)
+        model.eval()
+        intermediates = SaveIntermediateHook(
+            named_modules, include=include, exclude=exclude, no_duplicates=True, device=device, verbose=verbose)
+        with intermediates as hidden:
+            model(random_input)
+        layers = list(hidden.keys())
+
+        # check that the list of layer names and modules gives same result
+        intermediates = SaveIntermediateHook(
+            named_modules, layers=layers, device=device, verbose=verbose)
+        with intermediates as hidden_2:
+            model(random_input)
+        assert set(hidden.keys()) == set(hidden_2.keys()), [set(hidden.keys()), set(hidden_2.keys())]
+        for k, v in hidden.items():
+            assert torch.allclose(v, hidden_2[k])
+
+        return layers
+
+
+def evaluate_intermediates(
+        model: nn.Module,
+        dataloader: torch.utils.data.DataLoader,
+        layers: List[str],
+        device: str="cuda",
+        verbose=False,
+) -> Generator:
+    """Evaluate a model on a dataloader, returning inputs, intermediate values, outputs, and labels.
+
+    To get layers and named_modules, use `find_intermediate_layers()`.
+
+    Args:
+        model (nn.Module): Model to evaluate.
+        dataloader (torch.utils.data.DataLoader): Dataloader containing data to evaluate on.
+        layers (Set[str], optional): Only include these exact layer names. A layer name
+            is the module name followed by ".in" or ".out" indicating the input or output to the module.
+            If set, ignores include, exclude, and assumes no_duplicates=False. Defaults to None.
+        device (str, optional): Device to evaluate on. Defaults to "cuda".
+        verbose (bool, optional): Warn when two intermediates are identical and one is discarded.
+            This occurs often when modules are nested. Defaults to False.
 
     Yields:
         Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
             a tuple for every batch containing (inputs, intermediate values, outputs, true labels)
     """
-
-    if named_modules is None:
-        named_modules = list(model.named_modules())
-    if verbose: print(model, "MODULES", *[k for k, v in named_modules], sep="\n")
     model.to(device=device)
     model.eval()
     intermediates = SaveIntermediateHook(
-        named_modules, include=include, exclude=exclude, device=device)
+        model.named_modules(), layers=layers, device=device, verbose=verbose)
     with torch.no_grad():
-        for i, (batch_examples, labels) in enumerate(dataloader):
+        for batch_examples, labels in dataloader:
             with intermediates as hidden:
-                if verbose: print(f"...batch {i}")
                 batch_examples = batch_examples.to(device=device)
                 labels = labels.to(device=device)
                 output = model(batch_examples)
@@ -193,8 +265,8 @@ def evaluate_model(model: nn.Module,
     if state_dict is not None:
         model = deepcopy(model)
         model.load_state_dict(state_dict)
-    eval_iterator = evaluate_intermediates(
-        model, dataloader, device, named_modules=[])
+    eval_iterator = evaluate_intermediates(  # layers=[] because no intermediates needed
+        model, dataloader, [], device=device)
     _, _, outputs, labels = combine_batches(eval_iterator)
     acc = torch.argmax(outputs, dim=-1) == labels if return_accuracy else None
     loss = None if loss_fn is None else loss_fn(outputs, labels)

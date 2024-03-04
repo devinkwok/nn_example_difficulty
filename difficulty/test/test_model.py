@@ -4,16 +4,92 @@ import numpy.testing as npt
 import torch
 
 from difficulty.test.base import BaseTest
-from difficulty.model.eval import evaluate_model, evaluate_intermediates, combine_batches
+from difficulty.model.eval import evaluate_model, evaluate_intermediates, find_intermediate_layers, combine_batches
 from difficulty.metrics import *
 
 
 class TestModel(BaseTest):
 
+    def setUp(self):
+        super().setUp()
+        self.data_shape = self.data[0].shape
+        self.layers = find_intermediate_layers(self.model, self.data_shape, device=self.device, include=["relu"])
+        self.all_layers = find_intermediate_layers(self.model, self.data_shape, device=self.device)
+
+    def test_find_intermediate_layers(self):
+        npt.assert_array_equal(self.all_layers,
+            ['conv.in',                 # input
+            'conv.out',
+            'bn.out',
+            'relu.out',                # block 0 input
+            'blocks.0.conv1.out',
+            'blocks.0.bn1.out',
+            'blocks.0.relu1.out',
+            'blocks.0.conv2.out',
+            'blocks.0.bn2.out',
+            'blocks.0.relu2.in',       # skip connection
+            'blocks.0.relu2.out',      # block 1 input
+            'blocks.1.conv1.out',
+            'blocks.1.bn1.out',
+            'blocks.1.relu1.out',
+            'blocks.1.conv2.out',
+            'blocks.1.bn2.out',
+            'blocks.1.relu2.in',       # skip connection
+            'blocks.1.relu2.out',      # block 2 input
+            'blocks.2.conv1.out',
+            'blocks.2.bn1.out',
+            'blocks.2.relu1.out',
+            'blocks.2.conv2.out',
+            'blocks.2.bn2.out',
+            'blocks.2.shortcut.0.out', # conv on skip path
+            'blocks.2.shortcut.1.out', # bn on skip path
+            'blocks.2.relu2.in',       # skip connection
+            'blocks.2.relu2.out',      # block 3 input
+            'blocks.3.conv1.out',
+            'blocks.3.bn1.out',
+            'blocks.3.relu1.out',
+            'blocks.3.conv2.out',
+            'blocks.3.bn2.out',
+            'blocks.3.relu2.in',       # skip connection
+            'blocks.3.relu2.out',      # block 4 input
+            'blocks.4.conv1.out',
+            'blocks.4.bn1.out',
+            'blocks.4.relu1.out',
+            'blocks.4.conv2.out',
+            'blocks.4.bn2.out',
+            'blocks.4.shortcut.0.out', # conv on skip path
+            'blocks.4.shortcut.1.out', # bn on skip path
+            'blocks.4.relu2.in',       # skip connection
+            'blocks.4.relu2.out',      # block 5 input
+            'blocks.5.conv1.out',
+            'blocks.5.bn1.out',
+            'blocks.5.relu1.out',
+            'blocks.5.conv2.out',
+            'blocks.5.bn2.out',
+            'blocks.5.relu2.in',       # skip connection
+            'blocks.5.relu2.out',      # linear classifier input
+            'fc.in',                   # pooling
+            'fc.out'                   # output
+            ])
+        # only get input/output to top level module
+        first_module, *_  = self.model.named_modules()
+        layers = find_intermediate_layers(self.model, self.data_shape, device=self.device, named_modules=[first_module])
+        npt.assert_array_equal(layers, ['.in', '.out'])
+        # include selected layers
+        layers = find_intermediate_layers(self.model, self.data_shape, device=self.device, include=["fc"])
+        npt.assert_array_equal(layers, ['fc.in', 'fc.out'])
+        # exclude selected layers
+        layers = find_intermediate_layers(self.model, self.data_shape, device=self.device, exclude=["conv", "bn", "relu", "shortcut", ".in", "fc."])
+        npt.assert_array_equal(layers, ['blocks.0.out', 'blocks.1.out', 'blocks.2.out', 'blocks.3.out', 'blocks.4.out', 'blocks.5.out', ".out"])
+
+
     def test_evaluate_intermediates(self):
         with torch.no_grad():
-            y = evaluate_intermediates(self.model, self.dataloader, device=self.device)
-            input, hidden, output, labels = combine_batches(y)
+            layers_subset = ['blocks.0.out', 'blocks.1.out', 'blocks.2.out', 'blocks.3.out', 'blocks.4.out', 'blocks.5.out', ".out"]
+            # include layers_subset because they are duplicates in self.all_layers, and thus removed by find_intermediate_layers
+            # this allows comparison with evaluating only layers_subset later
+            z = evaluate_intermediates(self.model, self.dataloader, self.all_layers + layers_subset, device=self.device)
+            input, hidden, output, labels = combine_batches(z)
             self.tensors_equal(input, self.data)
             self.all_close(output, self.model(self.data.to(device=self.device)))
             self.tensors_equal(labels, self.data_labels)
@@ -21,119 +97,58 @@ class TestModel(BaseTest):
             self.tensors_equal(hidden[layers[0]], input)
             self.tensors_equal(hidden[layers[-1]], output)
             [self.assertEqual(len(v), self.n) for v in hidden.values()]
-            npt.assert_array_equal(list(hidden.keys()),
-                ['conv.in',                 # input
-                 'conv.out',
-                 'bn.out',
-                 'relu.out',                # block 0 input
-                 'blocks.0.conv1.out',
-                 'blocks.0.bn1.out',
-                 'blocks.0.relu1.out',
-                 'blocks.0.conv2.out',
-                 'blocks.0.bn2.out',
-                 'blocks.0.relu2.in',       # skip connection
-                 'blocks.0.relu2.out',      # block 1 input
-                 'blocks.1.conv1.out',
-                 'blocks.1.bn1.out',
-                 'blocks.1.relu1.out',
-                 'blocks.1.conv2.out',
-                 'blocks.1.bn2.out',
-                 'blocks.1.relu2.in',       # skip connection
-                 'blocks.1.relu2.out',      # block 2 input
-                 'blocks.2.conv1.out',
-                 'blocks.2.bn1.out',
-                 'blocks.2.relu1.out',
-                 'blocks.2.conv2.out',
-                 'blocks.2.bn2.out',
-                 'blocks.2.shortcut.0.out', # conv on skip path
-                 'blocks.2.shortcut.1.out', # bn on skip path
-                 'blocks.2.relu2.in',       # skip connection
-                 'blocks.2.relu2.out',      # block 3 input
-                 'blocks.3.conv1.out',
-                 'blocks.3.bn1.out',
-                 'blocks.3.relu1.out',
-                 'blocks.3.conv2.out',
-                 'blocks.3.bn2.out',
-                 'blocks.3.relu2.in',       # skip connection
-                 'blocks.3.relu2.out',      # block 4 input
-                 'blocks.4.conv1.out',
-                 'blocks.4.bn1.out',
-                 'blocks.4.relu1.out',
-                 'blocks.4.conv2.out',
-                 'blocks.4.bn2.out',
-                 'blocks.4.shortcut.0.out', # conv on skip path
-                 'blocks.4.shortcut.1.out', # bn on skip path
-                 'blocks.4.relu2.in',       # skip connection
-                 'blocks.4.relu2.out',      # block 5 input
-                 'blocks.5.conv1.out',
-                 'blocks.5.bn1.out',
-                 'blocks.5.relu1.out',
-                 'blocks.5.conv2.out',
-                 'blocks.5.bn2.out',
-                 'blocks.5.relu2.in',       # skip connection
-                 'blocks.5.relu2.out',      # linear classifier input
-                 'fc.in',                   # pooling
-                 'fc.out'                   # output
-                 ])
-            # only save input/output to top level module
-            first_module, *_  = self.model.named_modules()
-            y = evaluate_intermediates(self.model, self.dataloader, device=self.device, named_modules=[first_module])
-            _, hidden, _, _ = combine_batches(y)
-            self.tensors_equal(hidden['.in'], input)
-            self.tensors_equal(hidden['.out'], output)
-            npt.assert_array_equal(list(hidden.keys()), ['.in', '.out'])
-            # include selected layers
-            y = evaluate_intermediates(self.model, self.dataloader, device=self.device, include=["fc"])
-            _, hidden, _, _ = combine_batches(y)
-            npt.assert_array_equal(list(hidden.keys()), ['fc.in', 'fc.out'])
-            # exclude selected layers
-            y = evaluate_intermediates(self.model, self.dataloader, device=self.device, exclude=["conv", "bn", "relu", "shortcut", ".in", "fc."])
-            _, hidden, _, _ = combine_batches(y)
-            npt.assert_array_equal(list(hidden.keys()), ['blocks.0.out', 'blocks.1.out', 'blocks.2.out', 'blocks.3.out', 'blocks.4.out', 'blocks.5.out', ".out"])
+            # intermediates for only selected layers
+            z = evaluate_intermediates(self.model, self.dataloader, layers_subset, device=self.device)
+            _, hidden_2, _, _ = combine_batches(z)
+            npt.assert_array_equal(list(hidden_2.keys()), layers_subset)
+            for k, v in hidden_2.items():
+                self.all_close(v, hidden[k])
 
     def test_eval_model(self):
-        y, _, _, _ = evaluate_model(self.model, self.dataloader, device=self.device)
+        y, labels, acc, loss = evaluate_model(self.model, self.dataloader, device=self.device)
         self.assertEqual(len(y), self.n)
         self.all_close(y, self.model(self.data.to(device=self.device)))
-
-    def subset_pd_intermediates(self, intermediates):
-        return [v for k, v in intermediates.items() if "relu" in k]
+        self.tensors_equal(labels, self.data_labels)
+        self.assertIsNone(acc)
+        self.assertIsNone(loss)
+        y, labels, acc, loss = evaluate_model(self.model, self.dataloader, device=self.device,
+                                              return_accuracy=True, loss_fn=lambda x, y: torch.argmax(x, dim=-1) == y)
+        self.tensors_equal(acc, self.data_labels == torch.argmax(y.detach().cpu(), dim=-1))
+        self.all_close(loss, acc)
 
     def test_prediction_depth(self):
         # check that outputs are correct shape and ranges
-        _, y, out, _ = combine_batches(evaluate_intermediates(self.model, self.dataloader, device=self.device))
-        intermediates = self.subset_pd_intermediates(y)
-        train_data = [v[:self.n // 2] for v in intermediates]
+        _, z, out, _ = combine_batches(evaluate_intermediates(self.model, self.dataloader, self.layers, device=self.device))
+        train_z = [v[:self.n // 2] for v in z.values()]
         train_labels = self.data_labels[:self.n // 2]
         train_out = out[:self.n // 2]
-        pd = prediction_depth(train_data, train_labels, intermediates, self.data_labels, k=2)
+        pd = prediction_depth(train_z, train_labels, z, self.data_labels, k=2)
         self.assertEqual(pd.shape, (self.n,))
         self.assertTrue(torch.all(0 <= pd))
-        self.assertTrue(torch.all(pd <= len(intermediates)))
+        self.assertTrue(torch.all(pd <= len(z)))
 
         # check that object is the same as function
-        pd_obj = PredictionDepth(train_data, train_labels, k=2)
+        pd_obj = PredictionDepth(train_z, train_labels, k=2)
         obj_outputs = []
         # run over batches
-        for _, x, _, labels in evaluate_intermediates(self.model, self.dataloader, device=self.device):
-            x = self.subset_pd_intermediates(x)
+        for _, x, _, labels in evaluate_intermediates(self.model, self.dataloader, self.layers, device=self.device):
             obj_outputs.append(pd_obj(x, labels))
         self.all_close(torch.cat(obj_outputs, dim=0), pd)
 
         # check that softmax of outputs is appended
-        pd = prediction_depth(train_data, train_labels, intermediates, self.data_labels,
+        pd = prediction_depth(train_z, train_labels, z, self.data_labels,
                               train_outputs=train_out, test_outputs=out, k=2)
-        self.assertTrue(torch.any(pd > len(intermediates)))
+        self.assertTrue(torch.any(pd > len(z)))
 
         # check that classifying the training points with k=1 is always identical to training labels
-        pd = prediction_depth(intermediates, self.data_labels, intermediates, self.data_labels, k=1)
+        pd = prediction_depth(z, self.data_labels, z, self.data_labels, k=1)
         self.assertEqual(pd.shape, (self.n,))
         self.tensors_equal(pd, torch.zeros_like(pd))  # always correct
         # flipping labels makes prediction depth always the max
-        pd = prediction_depth(intermediates, 1 - self.data_labels, intermediates, self.data_labels, k=1)
-        self.tensors_equal(pd, torch.full_like(pd, len(intermediates)))
+        pd = prediction_depth(z, 1 - self.data_labels, z, self.data_labels, k=1)
+        self.tensors_equal(pd, torch.full_like(pd, len(z)))
         # check that dict input works, and omitting test points classifies training points
-        pd = prediction_depth(y, self.data_labels, k=1)
+        pd = prediction_depth(z, self.data_labels, k=1)
         self.tensors_equal(pd, torch.zeros_like(pd))
 
         # check classification in an artificial task
@@ -148,14 +163,15 @@ class TestModel(BaseTest):
         self.tensors_equal(pd, torch.tensor([3, 2, 1, 0]))
 
     def test_prototypes(self):
-        _, y, _, _ = combine_batches(evaluate_intermediates(
-            self.model, self.dataloader, device=self.device, include=['blocks.5.relu2.']))
-        distances = supervised_prototypes(y['blocks.5.relu2.out'], self.data_labels)
+        repr_layer = 'blocks.5.relu2.out'
+        _, z, _, _ = combine_batches(evaluate_intermediates(
+            self.model, self.dataloader, [repr_layer], device=self.device))
+        distances = supervised_prototypes(z[repr_layer], self.data_labels)
         self.assertEqual(distances.shape, (self.n,))
-        distances, kmeans = self_supervised_prototypes(y['blocks.5.relu2.out'], k=10, return_kmeans_obj=True)
+        distances, kmeans = self_supervised_prototypes(z[repr_layer], k=10, return_kmeans_obj=True)
         self.assertEqual(distances.shape, (self.n,))
         # supervised using labels from self-supervised should be equal
-        dist_supervised = supervised_prototypes(y['blocks.5.relu2.out'], torch.tensor(kmeans.labels_))
+        dist_supervised = supervised_prototypes(z[repr_layer], torch.tensor(kmeans.labels_))
         self.all_close(distances, dist_supervised)
 
         # artificial data: clusters x and y with differing means
@@ -188,27 +204,32 @@ class TestModel(BaseTest):
 
     def test_representation_metrics(self):
         SEED = 42
-        _, y, outputs, labels = combine_batches(evaluate_intermediates(self.model, self.dataloader, device=self.device))
+        _, z, outputs, labels = combine_batches(evaluate_intermediates(
+            self.model, self.dataloader, self.all_layers, device=self.device, verbose=False))
+        repr = list(z.values())[-1]
 
         # use default values
-        pd = prediction_depth(y, self.data_labels)
-        representation = list(y.values())[-1]
-        proto = supervised_prototypes(representation, self.data_labels)
-        selfproto = self_supervised_prototypes(representation, random_state=SEED)
+        pd = prediction_depth(z, self.data_labels)
+        proto = supervised_prototypes(repr, self.data_labels)
+        selfproto = self_supervised_prototypes(repr, random_state=SEED)
         scores = representation_metrics(self.model, self.dataloader, device=self.device, selfproto_random_state=SEED)
         self.all_close(scores["pd"], pd)
         self.all_close(scores["proto"], proto)
         self.all_close(scores["selfproto"], selfproto)
 
         # use non-defaults
+        proto_layer = 'fc.in'
+        representations = z[proto_layer]
         test_dataloader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(self.data, 1 - self.data_labels))
-        y_softmax = list(y.values()) + [torch.nn.functional.softmax(representation, dim=-1)]
-        pd = prediction_depth(y_softmax, self.data_labels, y_softmax, 1 - self.data_labels, k=2)
-        proto = supervised_prototypes(y['blocks.5.relu2.out'], self.data_labels)
-        selfproto = self_supervised_prototypes(y['blocks.5.relu2.out'], k=10, random_state=SEED)
+        _, z, outputs, labels = combine_batches(evaluate_intermediates(
+            self.model, self.dataloader, self.layers, device=self.device, verbose=False))
+        z_softmax = list(z.values()) + [torch.nn.functional.softmax(repr, dim=-1)]
+        pd = prediction_depth(z_softmax, self.data_labels, z_softmax, 1 - self.data_labels, k=2)
+        proto = supervised_prototypes(representations, self.data_labels)
+        selfproto = self_supervised_prototypes(representations, k=10, random_state=SEED)
         scores = representation_metrics(self.model, self.dataloader, device=self.device, generate_pointwise_metrics=True,
-                                        pd_append_softmax=True, pd_test_dataloader=test_dataloader, pd_k=2,
-                                        proto_layer='blocks.5.relu2.out', selfproto_k=10, selfproto_random_state=SEED)
+                                        pd_layers=self.layers, pd_append_softmax=True, pd_test_dataloader=test_dataloader, pd_k=2,
+                                        proto_layer=proto_layer, selfproto_k=10, selfproto_random_state=SEED, verbose=True)
         self.all_close(scores["pd"], pd)
         self.all_close(scores["proto"], proto)
         self.all_close(scores["selfproto"], selfproto)
