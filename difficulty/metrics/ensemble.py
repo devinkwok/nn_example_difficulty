@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-
+from difficulty.utils import detach_tensors
 from difficulty.metrics.accumulator import Accumulator, OnlineMean
 from difficulty.model.eval import evaluate_model
 
@@ -19,7 +19,9 @@ __all__ = [
 def ensemble_metrics(
         models: Iterable[callable],
         dataloader: torch.utils.data.DataLoader,
-        device="cuda"
+        device="cuda",
+        to_cpu=True,
+        to_numpy=False,
     ):
     # mean accuracy, ddd
     accuracies = OnlineEnsembleAccuracy()
@@ -29,11 +31,11 @@ def ensemble_metrics(
         accuracies.add(acc)
         consensus_labels.add(eval_logits)
     #TODO conf, agr
-    return {
+    return detach_tensors({
         "ddd": accuracies.dichotomous_data_difficulty(),
         "allacc": accuracies.get(),
         "consensuslabel": consensus_labels.get(),
-    }
+    }, to_cpu=to_cpu, to_numpy=to_numpy)
 
 
 class OnlineEnsembleAccuracy(OnlineMean):
