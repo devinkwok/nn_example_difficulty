@@ -8,8 +8,8 @@ from sklearn.cluster import KMeans
 from difficulty.metrics.pointwise import pointwise_metrics
 from difficulty.metrics.forget import first_unforgettable
 
-from difficulty.utils import detach_tensors
-from difficulty.model.eval import evaluate_intermediates, find_intermediate_layers, combine_batches
+from difficulty.utils import detach_tensors, ConcatTensor
+from difficulty.model.eval import evaluate_intermediates, find_intermediate_layers, combine_batches, split_batches
 
 
 __all__ = [
@@ -29,6 +29,7 @@ def representation_metrics(
         to_numpy=False,
         generate_pointwise_metrics=False,
         verbose=False,
+        n_examples: int=None,
         pd_layers: List[str]=None,
         pd_k: int=30,
         pd_append_softmax: bool=False,
@@ -39,15 +40,57 @@ def representation_metrics(
         selfproto_random_state: int=None,
         selfproto_max_iter: int=300,
     ):
+        """Generate representation metrics: prediction_depth, supervised_prototypes, and self_supervised_prototypes.
+
+        Args:
+            model (nn.Module): Model to evaluate.
+            dataloader (torch.utils.data.DataLoader): Dataloader containing data to evaluate on.
+            device (str, optional): Device to evaluate on. Defaults to "cuda".
+            to_cpu (bool, optional): if results should be moved to cpu. Defaults to True.
+            to_numpy (bool, optional): if results should be converted to numpy arrays. Defaults to False.
+            generate_pointwise_metrics (bool, optional):
+                whether to also call pointwise_metrics (to avoid re-evaluating model). Defaults to False.
+            verbose (bool, optional): Warn when two intermediates are identical and one is discarded.
+                This occurs often when modules are nested. Defaults to False.
+            n_examples (int, optional): if set, preallocate memory for concatenating tensors.
+                Total number of examples in dim 0 over all batches. Default is None.
+            pd_layers (List[str], optional): Only include these exact layer names. A layer name
+                is the module name followed by ".in" or ".out" indicating the input or output to the module.
+                If not set, use all layers found by `find_intermediate_layers`. Defaults to None.
+            pd_k (int, optional): for prediction depth,
+                number of neighbours to compare in k-nearest neighbours. Defaults to 30.
+            pd_append_softmax (bool, optional): for prediction depth,
+                whether to include softmax of outputs as layer. Defaults to False.
+            pd_train_labels (torch.Tensor, optional): for prediction depth, labels used to fit the KNN, with shape (M,)
+                In Baldock et al. (2021), these are the consensus labels of the knn_activations.
+                If None, use the labels in the dataloader. Defaults to None.
+            pd_test_dataloader (torch.utils.data.DataLoader, optional):
+                Compute prediction depth for this data instead of the dataloader (the dataloader is used to fit the KNN only).
+                If None, use the dataloader to fit the KNN and compute prediction depth. Defaults to None.
+            proto_layer (str, optional): for supervised and self-supervised prototypes, name of layer to use as representations.
+                If None, use last layer of network found by `find_intermediate_layers` (excluding softmax). Defaults to None.
+            selfproto_k (int, optional): for self-supervised prototypes,
+                number of means for k-means clustering. Sorscher et al. (2022)
+                recommends any value within an order of magnitude of the true number classes,
+                noting that the performance when using this metric for data pruning
+                is not very sensitive to k. Defaults to 30.
+            selfproto_random_state (int, optional): for self-supervised prototypes,
+                deterministic seed for initializing k-means clustering. Defaults to None.
+            selfproto_max_iter (int, optional): for self-supervised prototypes,
+                number of k-means clustering iterations to run. Defaults to 300.
+
+        Returns:
+            Dict[str, torch.Tensor]: dictionary of representation metrics, and optionally pointwise metrics.
+        """
+        batch_shape = next(iter(dataloader))[0].shape
         if pd_layers is None:  # include all layers
-            pd_layers = find_intermediate_layers(model, next(iter(dataloader))[0].shape[1:], device=device)
+            pd_layers = find_intermediate_layers(model, batch_shape[1:], device=device)
         # include proto_layer to get intermediates for both prediction depth and (self) supervised prototypes
         append_proto_layer = (pd_layers is not None) and (proto_layer is not None) and (proto_layer not in pd_layers)
-        
+
         proto_layers = [proto_layer] if append_proto_layer else []
         generator = evaluate_intermediates(model, dataloader, pd_layers + proto_layers, device=device, verbose=verbose)
-        _, intermediates, outputs, labels = combine_batches(generator)
-        outputs = outputs if pd_append_softmax else None
+        inputs, intermediates, outputs, labels = combine_batches(generator, n_examples=n_examples)
         metrics = {}
 
         # generate other metrics here using model eval outputs
@@ -60,18 +103,19 @@ def representation_metrics(
             del pd_intermediates[proto_layer]
         # use true labels as consensus labels if not set
         train_labels = labels if pd_train_labels is None else pd_train_labels
-        pd_obj = PredictionDepth(pd_intermediates, train_labels, outputs, k=pd_k)
+        pd_obj = PredictionDepth(pd_intermediates, train_labels, outputs if pd_append_softmax else None, k=pd_k)
+
         # compute prediction depth on knn training data if test data not provided
         if pd_test_dataloader is None:
-            pd = pd_obj(pd_intermediates, train_labels, outputs)
-        else:
-            pd = []
-            # use pd_layers so that we don't include proto_layer
+            test_generator = split_batches(inputs, pd_intermediates, outputs, train_labels, batch_size=batch_shape[0])
+        else:  # use pd_layers so that we don't include proto_layer
             test_generator = evaluate_intermediates(model, pd_test_dataloader, pd_layers, device=device, verbose=verbose)
-            for _, test_intermediates, test_outputs, test_labels in test_generator:
-                test_outputs = test_outputs if pd_append_softmax else None
-                pd.append(pd_obj(test_intermediates, test_labels, test_outputs))
-            pd = torch.cat(pd, dim=0)
+
+        pd = ConcatTensor(n_examples)
+        for _, test_intermediates, test_outputs, test_labels in test_generator:
+            test_outputs = test_outputs if pd_append_softmax else None
+            pd.append(pd_obj(test_intermediates, test_labels, test_outputs))
+        pd = pd.cat()
 
         # for prototypes, use last layer as representation by default
         if proto_layer is None:
@@ -250,9 +294,10 @@ def self_supervised_prototypes(representations: torch.Tensor, k: int=30, max_ite
         representations (torch.Tensor): per-example activations. In Sorscher et al. (2022),
             this is the embedding space of an ImageNet pre-trained self-supervised model SWaV.
             Activations have shape (N, ...) where N is number of examples, and remaining dimensions are flattened.
-        k (int): number of means for k-means clustering.
+        k (int, optional): number of means for k-means clustering.
             Sorscher et al. (2022) recommends any value within an order of magnitude of the true number classes,
-            noting that the performance when using this metric for data pruning is not very sensitive to k.
+            noting that the performance when using this metric for data pruning is not very sensitive to k. Defaults to 30.
+        max_iter (int, optional): number of k-means clustering iterations to run. Defaults to 300.
 
     Returns:
         torch.Tensor: distance from examples to cluster centroids (self-supervised prototypes)

@@ -6,6 +6,8 @@ from typing import Iterable, List, Set, Tuple, Dict, Generator, Optional
 import torch
 import torch.nn as nn
 
+from difficulty.utils import ConcatTensor
+
 
 def is_identity(x: torch.tensor, y: torch.tensor):
     return len(x.flatten()) == len(y.flatten()) and torch.all(x.flatten() == y.flatten())
@@ -189,7 +191,7 @@ def evaluate_intermediates(
     Args:
         model (nn.Module): Model to evaluate.
         dataloader (torch.utils.data.DataLoader): Dataloader containing data to evaluate on.
-        layers (Set[str], optional): Only include these exact layer names. A layer name
+        layers (List[str], optional): Only include these exact layer names. A layer name
             is the module name followed by ".in" or ".out" indicating the input or output to the module.
             If set, ignores include, exclude, and assumes no_duplicates=False. Defaults to None.
         device (str, optional): Device to evaluate on. Defaults to "cuda".
@@ -213,27 +215,43 @@ def evaluate_intermediates(
                 yield batch_examples, hidden, output, labels
 
 
-def combine_batches(eval_intermediates_generator: Generator) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+def combine_batches(eval_intermediates_generator: Generator, n_examples=None) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
     """Combines batches from evaluate_intermediates().
 
     Args:
         eval_intermediates_generator: the generator returned by evaluate_intermediates().
+        n_examples (int, optional): if set, preallocate memory for concatenating tensors.
+            Total number of examples in dim 0 over all batches. Default is None.
 
     Returns:
         Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
             tuple containing (inputs, intermediate values, outputs, true labels)
     """
-    inputs, outputs, labels = [], [], []
-    hiddens = defaultdict(list)
+    inputs, outputs, labels = ConcatTensor(n_examples), ConcatTensor(n_examples), ConcatTensor(n_examples)
+    hiddens = defaultdict(lambda: ConcatTensor(n_examples))
     for input, hidden, output, label in eval_intermediates_generator:
         inputs.append(input)
         outputs.append(output)
         labels.append(label)
         for k, v in hidden.items():
             hiddens[k].append(v)
+
+    inputs = inputs.cat()
+    outputs = outputs.cat()
+    labels = labels.cat()
     for k, v in hiddens.items():
-        hiddens[k] = torch.cat(v, dim=0)
-    return torch.cat(inputs, dim=0), hiddens, torch.cat(outputs, dim=0), torch.cat(labels, dim=0)
+        hiddens[k] = hiddens[k].cat()
+    return inputs, hiddens, outputs, labels
+
+
+def split_batches(inputs, intermediates, outputs, labels, batch_size):
+    inputs = torch.split(inputs, batch_size, dim=0)
+    intermediates = {k: torch.split(v, batch_size, dim=0) for k, v in intermediates.items()}
+    outputs = torch.split(outputs, batch_size, dim=0)
+    labels = torch.split(labels, batch_size, dim=0)
+    for i, (input, output, label) in enumerate(zip(inputs, outputs, labels)):
+        intermediate = {k: v[i] for k, v in intermediates.items()}
+        yield input, intermediate, output, label
 
 
 def evaluate_model(model: nn.Module,

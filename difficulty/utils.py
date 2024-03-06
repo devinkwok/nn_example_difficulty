@@ -1,9 +1,45 @@
+import warnings
 from collections import OrderedDict
 from pathlib import Path
 from typing import Union, Dict, List
 import numpy as np
 import pandas as pd
 import torch
+
+
+class ConcatTensor():
+    def __init__(self, max_len=None):
+        """Concatenate tensors along dim 0, preallocate memory if max_len is set.
+
+        Args:
+            max_len (int, optional):  if set, preallocate memory for concatenating tensors.
+                Total length of dim 0 in filled tensor. Default is None.
+        """
+        self.idx = 0
+        self.max_len = max_len
+        self.tensor = [] if self.max_len is None else None
+
+    def _init_shape(self, tensor):
+        if self.tensor is None:
+            shape = (self.max_len, *tensor.shape[1:])
+            self.tensor = torch.empty(shape, dtype=tensor.dtype, layout=tensor.layout,
+                                    device=tensor.device, requires_grad=tensor.requires_grad)
+
+    def append(self, tensor: torch.Tensor):
+        if self.max_len is None:
+            self.tensor.append(tensor)
+        else:
+            self._init_shape(tensor)
+            self.tensor[self.idx:self.idx + tensor.shape[0], ...] = tensor
+            self.idx += tensor.shape[0]
+
+    def cat(self):
+        if self.max_len is None:
+            return torch.cat(self.tensor, dim=0)
+
+        if self.idx < self.max_len:
+            warnings.warn(f"ConcatTensor is not filled to {self.max_len} yet!")
+        return self.tensor[:self.max_len]
 
 
 def get_dtype(dtype: Union[str, torch.dtype]) -> torch.dtype:

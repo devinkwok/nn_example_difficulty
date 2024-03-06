@@ -101,6 +101,9 @@ class BaseTest(unittest.TestCase):
                 for k, v in metadata.items()}
             self.assertListEqual(obj.metadata_lists["count"], list(range(i+1)))
 
+    def tensors_equal(self, X, Y):
+        npt.assert_array_equal(X.detach().cpu().numpy(), Y.detach().cpu().numpy())
+
     def all_close(self, X, Y):
         # this test is more forgiving to account for gpu noise and low precision
         if isinstance(X, torch.Tensor):
@@ -111,5 +114,7 @@ class BaseTest(unittest.TestCase):
                                    Y + self.epsilon,
                                    atol=1e-5, rtol=1e-4, equal_nan=True, check_dtype=False)
 
-    def tensors_equal(self, X, Y):
-        npt.assert_array_equal(X.detach().cpu().numpy(), Y.detach().cpu().numpy())
+    def dict_all_close(self, X, Y):
+        npt.assert_array_equal(sorted(list(X.keys())), sorted(set(Y.keys())))
+        for k, v in X.items():
+            self.all_close(v, Y[k])
