@@ -221,9 +221,9 @@ class TestModel(BaseTest):
 
         # use default values
         pd = prediction_depth(z, self.data_labels)
-        proto = supervised_prototypes(repr, self.data_labels)
-        selfproto = self_supervised_prototypes(repr, random_state=SEED)
-        scores = representation_metrics(self.model, self.dataloader, device=self.device, selfproto_random_state=SEED)
+        proto = supervised_prototypes(repr.to(dtype=torch.float64), self.data_labels)
+        selfproto = self_supervised_prototypes(repr.to(dtype=torch.float64), random_state=SEED)
+        scores = representation_metrics(self.model, self.dataloader, device=self.device, selfproto_random_state=SEED, verbose=True)
         self.all_close(scores["pd"], pd)
         self.all_close(scores["proto"], proto)
         self.all_close(scores["selfproto"], selfproto)
@@ -236,16 +236,22 @@ class TestModel(BaseTest):
             self.model, self.dataloader, self.layers, device=self.device))
         z_softmax = list(z.values()) + [torch.nn.functional.softmax(repr, dim=-1)]
         pd = prediction_depth(z_softmax, self.data_labels, z_softmax, 1 - self.data_labels, k=2)
-        proto = supervised_prototypes(representations, self.data_labels)
-        selfproto = self_supervised_prototypes(representations, k=10, random_state=SEED)
+        proto = supervised_prototypes(representations.to(dtype=torch.float64), self.data_labels)
+        selfproto = self_supervised_prototypes(representations.to(dtype=torch.float64), k=10, random_state=SEED)
         scores = representation_metrics(self.model, self.dataloader, device=self.device, generate_pointwise_metrics=True,
-                                        pd_layers=self.layers, pd_append_softmax=True, pd_test_dataloader=test_dataloader, pd_k=2,
-                                        proto_layer=proto_layer, selfproto_k=10, selfproto_random_state=SEED, verbose=True)
-        self.all_close(scores["pd"], pd)
+                                        pd_layers=self.layers, pd_append_softmax=True,
+                                        pd_test_dataloader=test_dataloader, pd_k=2, pd_return_layerpred=True,
+                                        proto_layer=proto_layer, selfproto_k=10, selfproto_random_state=SEED)
+        self.tensors_equal(scores["pd"], pd)
         self.all_close(scores["proto"], proto)
         self.all_close(scores["selfproto"], selfproto)
         for k, v in pointwise_metrics(outputs, labels).items():
             self.all_close(scores[k], v)
+
+        layers = [scores[f"pdlayer{i}"] for i in range(len(self.layers) + 1)]
+        pd = PredictionDepth.depth_from_knn_predict(layers, 1 - self.data_labels)
+        self.tensors_equal(pd, scores["pd"])
+
 
 
 if __name__ == '__main__':

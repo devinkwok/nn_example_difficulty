@@ -1,3 +1,4 @@
+import time
 import warnings
 from collections import OrderedDict
 from pathlib import Path
@@ -5,6 +6,48 @@ from typing import Union, Dict, List
 import numpy as np
 import pandas as pd
 import torch
+
+
+class Stopwatch:
+    def __init__(self, name="STOPWATCH"):
+        self.name = name
+        self.n_total = 0
+        self.total_time = 0
+        self.n_since_last_print = 0
+        self.time_since_last_print = 0
+        self.start_time = None
+        self.stop_time = None
+
+    def start(self):
+        self.n_total += 1
+        self.n_since_last_print += 1
+        self.start_time = time.time()
+
+    def stop(self, message=None):
+        self.stop_time = time.time()
+        elapsed = self.stop_time - self.start_time
+        self.total_time += elapsed
+        self.time_since_last_print += elapsed
+        if message is not None:
+            self.print(message)
+
+    def lap(self, message=None):
+        self.stop(message)
+        self.start
+
+    def print(self, message=""):
+        elapsed = 0
+        # if stop() hasn't been called, return current time minus start
+        if self.start_time is not None:
+            elapsed = time.time() - self.start_time
+            if self.stop_time is not None and self.stop_time > self.start_time:
+                elapsed = self.stop_time - self.start_time
+        if message != "":
+            message = " " + message
+        print(f"{self.name}{message}\telapsed {elapsed:0.2f}\tlast {self.time_since_last_print:0.2f} " +
+              f"({self.n_since_last_print})\ttotal {self.total_time:0.2f} ({self.n_total})")
+        self.n_since_last_print = 0
+        self.time_since_last_print = 0
 
 
 class ConcatTensor():
