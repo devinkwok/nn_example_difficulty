@@ -9,7 +9,7 @@ import torch
 
 
 class Stopwatch:
-    def __init__(self, name="STOPWATCH"):
+    def __init__(self, name="STOPWATCH", verbose=False):
         self.name = name
         self.n_total = 0
         self.total_time = 0
@@ -17,6 +17,13 @@ class Stopwatch:
         self.time_since_last_print = 0
         self.start_time = None
         self.stop_time = None
+        self.verbose = verbose
+
+    def __enter__(self):
+        self.start()
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        self.stop("" if self.verbose else None)
 
     def start(self):
         self.n_total += 1
