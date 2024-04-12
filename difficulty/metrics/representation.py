@@ -204,7 +204,7 @@ def knn_predict(
     """
     knn = KNeighborsClassifier(k)  # use standard Euclidean distance
     train_x = train_x.reshape(train_x.shape[0], -1).detach().cpu().numpy()
-    knn.fit(train_x, train_labels)
+    knn.fit(train_x, train_labels.detach().cpu().numpy())
     if test_x is None:
         assert test_labels is None
         test_x = train_x
@@ -212,7 +212,7 @@ def knn_predict(
         assert test_labels is not None
         test_x = test_x.reshape(test_x.shape[0], -1).detach().cpu().numpy()
         predictions = torch.tensor(knn.predict(test_x))
-    match = predictions == test_labels
+    match = predictions == test_labels.detach().cpu()
     return match
 
 
