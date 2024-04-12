@@ -4,7 +4,7 @@ import numpy.testing as npt
 import torch
 
 from difficulty.test.base import BaseTest
-from difficulty.model.eval import evaluate_model, evaluate_intermediates, find_intermediate_layers, combine_batches, split_batches
+from difficulty.model.eval import evaluate_model, batch_eval_intermediates, evaluate_intermediates, find_intermediate_layers, combine_batches, split_batches
 from difficulty.metrics import *
 
 
@@ -83,6 +83,9 @@ class TestModel(BaseTest):
         npt.assert_array_equal(layers, ['blocks.0.out', 'blocks.1.out', 'blocks.2.out', 'blocks.3.out', 'blocks.4.out', 'blocks.5.out', ".out"])
 
     def _intermediates_generator(self, layers):  # wrapper to fill in some arguments
+        return batch_eval_intermediates(self.model, self.dataloader, layers, device=self.device)
+
+    def _evaluate_intermediates(self, layers):  # wrapper to fill in some arguments
         return evaluate_intermediates(self.model, self.dataloader, layers, device=self.device)
 
     def test_evaluate_intermediates(self):
@@ -90,8 +93,7 @@ class TestModel(BaseTest):
             layers_subset = ['blocks.0.out', 'blocks.1.out', 'blocks.2.out', 'blocks.3.out', 'blocks.4.out', 'blocks.5.out', ".out"]
             # include layers_subset because they are duplicates in self.all_layers, and thus removed by find_intermediate_layers
             # this allows comparison with evaluating only layers_subset later
-            z = self._intermediates_generator(self.all_layers + layers_subset)
-            input, hidden, output, labels = combine_batches(z)
+            input, hidden, output, labels = self._evaluate_intermediates(self.all_layers + layers_subset)
             self.tensors_equal(input, self.data)
             self.all_close(output, self.model(self.data.to(device=self.device)))
             self.tensors_equal(labels, self.data_labels)
@@ -100,8 +102,7 @@ class TestModel(BaseTest):
             self.tensors_equal(hidden[layers[-1]], output)
             [self.assertEqual(len(v), self.n) for v in hidden.values()]
             # intermediates for only selected layers
-            z = self._intermediates_generator(layers_subset)
-            _, hidden_2, _, _ = combine_batches(z)
+            _, hidden_2, _, _ = self._evaluate_intermediates(layers_subset)
             self.dict_all_close({k: v for k, v in hidden.items() if k in layers_subset}, hidden_2)
 
     def test_eval_model(self):
@@ -119,7 +120,7 @@ class TestModel(BaseTest):
     def test_combine_batches(self):
         z = self._intermediates_generator(self.layers)
         inputs, hidden, outputs, labels = combine_batches(z, len(self.data))
-        self.dict_all_close(hidden, combine_batches(self._intermediates_generator(self.layers))[1])
+        self.dict_all_close(hidden, self._evaluate_intermediates(self.layers)[1])
         gen = split_batches(inputs, hidden, outputs, labels, self.batch_size)
         for a, b in zip(gen, self._intermediates_generator(self.layers)):
             self.tensors_equal(a[0], b[0])  # inputs
@@ -129,7 +130,7 @@ class TestModel(BaseTest):
 
     def test_prediction_depth(self):
         # check that outputs are correct shape and ranges
-        _, z, out, _ = combine_batches(self._intermediates_generator(self.layers))
+        _, z, out, _ = self._evaluate_intermediates(self.layers)
         train_z = [v[:self.n // 2] for v in z.values()]
         train_labels = self.data_labels[:self.n // 2]
         train_out = out[:self.n // 2]
@@ -137,19 +138,6 @@ class TestModel(BaseTest):
         self.assertEqual(pd.shape, (self.n,))
         self.assertTrue(torch.all(0 <= pd))
         self.assertTrue(torch.all(pd <= len(z)))
-
-        # check that object is the same as function
-        pd_obj = PredictionDepth(train_z, train_labels, k=2)
-        obj_outputs = []
-        # run over batches
-        for _, x, _, labels in self._intermediates_generator(self.layers):
-            obj_outputs.append(pd_obj(x, labels))
-        self.all_close(torch.cat(obj_outputs, dim=0), pd)
-
-        # check that softmax of outputs is appended
-        pd = prediction_depth(train_z, train_labels, z, self.data_labels,
-                              train_outputs=train_out, test_outputs=out, k=2)
-        self.assertTrue(torch.any(pd > len(z)))
 
         # check that classifying the training points with k=1 is always identical to training labels
         pd = prediction_depth(z, self.data_labels, z, self.data_labels, k=1)
@@ -175,8 +163,7 @@ class TestModel(BaseTest):
 
     def test_prototypes(self):
         repr_layer = 'blocks.5.relu2.out'
-        _, z, _, _ = combine_batches(evaluate_intermediates(
-            self.model, self.dataloader, [repr_layer], device=self.device))
+        _, z, _, _ = evaluate_intermediates(self.model, self.dataloader, [repr_layer], device=self.device)
         distances = supervised_prototypes(z[repr_layer], self.data_labels)
         self.assertEqual(distances.shape, (self.n,))
         distances, kmeans = self_supervised_prototypes(z[repr_layer], k=10, return_kmeans_obj=True)
@@ -215,8 +202,7 @@ class TestModel(BaseTest):
 
     def test_representation_metrics(self):
         SEED = 42
-        _, z, outputs, labels = combine_batches(evaluate_intermediates(
-            self.model, self.dataloader, self.all_layers, device=self.device))
+        _, z, outputs, labels = evaluate_intermediates(self.model, self.dataloader, self.all_layers, device=self.device)
         repr = list(z.values())[-1]
 
         # use default values
@@ -232,8 +218,7 @@ class TestModel(BaseTest):
         proto_layer = 'fc.in'
         representations = z[proto_layer]
         test_dataloader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(self.data, 1 - self.data_labels))
-        _, z, outputs, labels = combine_batches(evaluate_intermediates(
-            self.model, self.dataloader, self.layers, device=self.device))
+        _, z, outputs, labels = evaluate_intermediates(self.model, self.dataloader, self.layers, device=self.device)
         z_softmax = list(z.values()) + [torch.nn.functional.softmax(repr, dim=-1)]
         pd = prediction_depth(z_softmax, self.data_labels, z_softmax, 1 - self.data_labels, k=2)
         proto = supervised_prototypes(representations.to(dtype=torch.float64), self.data_labels)
@@ -249,8 +234,7 @@ class TestModel(BaseTest):
             self.all_close(scores[k], v)
 
         layers = [scores[f"pdlayer{i}"] for i in range(len(self.layers) + 1)]
-        pd = PredictionDepth.depth_from_knn_predict(layers, 1 - self.data_labels)
-        self.tensors_equal(pd, scores["pd"])
+        self.tensors_equal(first_unforgettable(torch.stack(layers, dim=0)), scores["pd"])
 
 
 

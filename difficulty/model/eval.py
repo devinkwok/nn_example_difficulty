@@ -2,7 +2,7 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from collections import OrderedDict
-from typing import Iterable, List, Set, Tuple, Dict, Generator, Optional
+from typing import Iterable, List, Tuple, Dict, Generator, Optional
 import torch
 import torch.nn as nn
 
@@ -177,7 +177,7 @@ def find_intermediate_layers(
         return layers
 
 
-def evaluate_intermediates(
+def batch_eval_intermediates(
         model: nn.Module,
         dataloader: torch.utils.data.DataLoader,
         layers: List[str],
@@ -216,10 +216,10 @@ def evaluate_intermediates(
 
 
 def combine_batches(eval_intermediates_generator: Generator, n_examples=None) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
-    """Combines batches from evaluate_intermediates().
+    """Combines batches from batch_evaluate_intermediates().
 
     Args:
-        eval_intermediates_generator: the generator returned by evaluate_intermediates().
+        eval_intermediates_generator: the generator returned by batch_evaluate_intermediates().
         n_examples (int, optional): if set, preallocate memory for concatenating tensors.
             Total number of examples in dim 0 over all batches. Default is None.
 
@@ -254,6 +254,29 @@ def split_batches(inputs, intermediates, outputs, labels, batch_size):
         yield input, intermediate, output, label
 
 
+def evaluate_intermediates(model: nn.Module, dataloader: torch.utils.data.DataLoader, layers: List[str], device: str="cuda", verbose=False) -> torch.Tensor:
+    """Get all intermediates for data in dataloader (combine all batches together).
+
+    Args:
+        model (nn.Module): Model to evaluate.
+        dataloader (torch.utils.data.DataLoader): Dataloader containing data to evaluate on.
+        layers (List[str], optional): Only include these exact layer names. A layer name
+            is the module name followed by ".in" or ".out" indicating the input or output to the module.
+            If not set, use all layers found by `find_intermediate_layers`. Defaults to None.
+        device (str, optional): Device to evaluate on. Defaults to "cuda".
+        verbose (bool, optional): Warn when two intermediates are identical and one is discarded.
+            This occurs often when modules are nested. Defaults to False.
+
+    Returns:
+        Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+            same output as batch_eval_intermediates, but with batches combined to shape (N, ...)
+    """
+    n_examples = len(dataloader.dataset)
+    generator = batch_eval_intermediates(model, dataloader, layers, device=device, verbose=verbose)
+    inputs, intermediates, outputs, labels = combine_batches(generator, n_examples=n_examples)
+    return inputs, intermediates, outputs, labels
+
+
 def evaluate_model(model: nn.Module,
                    dataloader: torch.utils.data.DataLoader,
                    state_dict: Dict=None,
@@ -283,9 +306,8 @@ def evaluate_model(model: nn.Module,
     if state_dict is not None:
         model = deepcopy(model)
         model.load_state_dict(state_dict)
-    eval_iterator = evaluate_intermediates(  # layers=[] because no intermediates needed
-        model, dataloader, [], device=device)
-    _, _, outputs, labels = combine_batches(eval_iterator)
+    # set layers=[] because no intermediates needed
+    _, _, outputs, labels = evaluate_intermediates(model, dataloader, [], device=device)
     acc = torch.argmax(outputs, dim=-1) == labels if return_accuracy else None
     loss = None if loss_fn is None else loss_fn(outputs, labels)
     return outputs, labels, acc, loss
