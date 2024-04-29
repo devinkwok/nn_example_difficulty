@@ -1,6 +1,15 @@
 Example difficulty
 ==================
 
+Installation
+-----
+
+Requirements are in `requirements.txt`.
+
+If computing prediction depth from [Baldock et al. (2021) Deep learning through the lens of example difficulty](https://proceedings.neurips.cc/paper/2021/hash/5a4b25aaed25c2ee1b74de72dc03c14e-Abstract.html), it can be much faster to compute K-nearest-neighbors using the Faiss library.
+To enable this, you will need to install [Faiss](https://github.com/facebookresearch/faiss) following the instructions in the linked repository.
+Afterwards, set `use_faiss=True` and `device="cuda"` in `prediction_depth` or `representation_metrics`.
+
 Usage
 -----
 

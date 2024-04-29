@@ -1,4 +1,5 @@
 from typing import List, Iterable, Generator, Union, Dict
+import warnings
 import torch
 import torch.nn as nn
 from sklearn.neighbors import KNeighborsClassifier
@@ -36,6 +37,7 @@ def representation_metrics(
         pd_train_labels: torch.Tensor=None,
         pd_test_dataloader: torch.utils.data.DataLoader=None,
         pd_return_layerpred=False,
+        use_faiss: bool=False,
         proto_layer: str=None,
         selfproto_k: int=30,
         selfproto_random_state: int=None,
@@ -68,6 +70,7 @@ def representation_metrics(
                 If None, use the dataloader to fit the KNN and compute prediction depth. Defaults to None.
             pd_return_layerpred (bool, optional): If True, return each layer's predicted class as a score
                 with the key "pd_{k}" for the kth layer. Defaults to False.
+            use_faiss (bool, optional): If True, use Faiss library to do K-nearest-neighbor search (faster). Defaults to False.
             proto_layer (str, optional): for supervised and self-supervised prototypes, name of layer to use as representations.
                 If None, use last layer of network found by `find_intermediate_layers` (excluding softmax). Defaults to None.
             selfproto_k (int, optional): for self-supervised prototypes,
@@ -126,7 +129,7 @@ def representation_metrics(
         test_labels = train_labels if pd_test_dataloader is None else torch.cat([labels for _, labels in pd_test_dataloader], dim=0)
 
         pd, knn_outputs = prediction_depth(
-            train_intermediates, train_labels, test_intermediates, test_labels, k=pd_k, verbose=verbose, return_matches=True)
+            train_intermediates, train_labels, test_intermediates, test_labels, k=pd_k, verbose=verbose, return_matches=True, use_faiss=use_faiss, device=device)
         if verbose: stopwatch.lap("prediction_depth")
 
         metrics = {**metrics, **detach_tensors({"pd": pd}, to_cpu=to_cpu, to_numpy=to_numpy)}
@@ -187,6 +190,9 @@ def knn_predict(
         test_x: torch.Tensor=None,
         test_labels: torch.Tensor=None,
         k: int=30,
+        use_faiss=False,
+        device="cuda",
+        verbose=False,
 ) -> torch.Tensor:
     """Use K nearest neighbours to predict labels from test_x using train_x and train_labels
 
@@ -198,11 +204,20 @@ def knn_predict(
         test_labels (torch.Tensor, optional): labels for test_x to compare with predictions, of shape (M,).
             If None, use train_labels. Must be set if test_x is not None. Defaults to None.
         k (int, optional): number of neighbours to use in KNN. Defaults to 30.
+        use_faiss (bool, optional): If True, use Faiss library to do K-nearest-neighbor search (faster). Defaults to False.
+        device (str, optional): If use_faiss, use this device to evaluate on. Defaults to "cuda".
+        verbose (bool, optional): print if using Faiss. Defaults to False.
 
     Returns:
         torch.Tensor: for each test_x, whether prediction matches test_labels is correct, of shape (M,)
     """
-    knn = KNeighborsClassifier(k)  # use standard Euclidean distance
+    # use standard Euclidean distance
+    if use_faiss and verbose:
+        warnings.warn(f"Using Faiss to compute K-nearest neighbors, device={device}")
+        from difficulty.faiss_knn import FaissKNeighbors
+        knn = FaissKNeighbors(k, device=device)
+    else:
+        knn = KNeighborsClassifier(k)
     train_x = train_x.reshape(train_x.shape[0], -1).detach().cpu().numpy()
     knn.fit(train_x, train_labels.detach().cpu().numpy())
     if test_x is None:
@@ -225,6 +240,8 @@ def prediction_depth(
         k: int=30,
         verbose=False,
         return_matches=False,
+        use_faiss=False,
+        device="cuda",
 ) -> torch.Tensor:
     """Functional equivalent of PredictionDepth. Use this function for a single call,
     whereas the PredictionDepth object is better suited for repeat calls over batches,
@@ -247,6 +264,8 @@ def prediction_depth(
         verbose (bool, optional): print layer number that is being completed. Defaults to False.
         return_matches (bool, optional): for each layer and example in the N outputs,
             return whether it matches the label, with shape (L, N). Defaults to False.
+        use_faiss (bool, optional): If True, use Faiss library to do K-nearest-neighbor search (faster). Defaults to False.
+        device (str, optional): Device to evaluate on. Defaults to "cuda".
 
     Returns:
         torch.Tensor: prediction depths of shape (N,) (note: this is NOT backprop-enabled),
@@ -268,12 +287,13 @@ def prediction_depth(
         for i, train_x in enumerate(train_intermediates):
             if verbose:
                 print(f"pd: fitting KNN to layer {i}")
-            knn_predictions.append(knn_predict(train_x, train_labels, k=k))
+            knn_predictions.append(knn_predict(train_x, train_labels, k=k, use_faiss=use_faiss, device=device, verbose=verbose))
     else:
         for i, (train_x, test_x) in enumerate(zip(train_intermediates, test_intermediates)):
             if verbose:
                 print(f"pd: fitting KNN to layer {i}")
-            knn_predictions.append(knn_predict(train_x, train_labels, test_x, test_labels, k=k))
+            knn_predictions.append(knn_predict(
+                train_x, train_labels, test_x, test_labels, k=k, use_faiss=use_faiss, device=device, verbose=verbose))
 
     matches = torch.stack(knn_predictions, dim=0)
     matches = matches.to(dtype=train_labels.dtype, device=train_labels.device)

@@ -1,5 +1,5 @@
 import unittest
-from collections import defaultdict
+import warnings
 import numpy.testing as npt
 import torch
 
@@ -173,6 +173,14 @@ class TestModel(BaseTest):
         pd = prediction_depth(train_generator, 1 - self.data_labels, test_generator, self.data_labels, k=4)
         _, z, _, _ = self._evaluate_intermediates(self.layers)
         self.tensors_equal(pd, prediction_depth(z, 1 - self.data_labels, z, self.data_labels, k=4))
+
+    def test_faiss_knn(self):
+        try:
+            _, z, _, _ = self._evaluate_intermediates(self.layers)
+            pd = prediction_depth(z, self.data_labels, k=3, use_faiss=True, device=self.device)
+            self.tensors_equal(pd, prediction_depth(z, self.data_labels, k=3))
+        except ModuleNotFoundError:
+            warnings.warn("FAISS library not available, only testing with sklearn.")
 
     def test_prototypes(self):
         repr_layer = 'blocks.5.relu2.out'
