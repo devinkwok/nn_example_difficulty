@@ -118,7 +118,7 @@ def representation_metrics(
             model, dataloader, pd_layers, device=device, verbose=verbose, append_softmax=pd_append_softmax)
         # use true labels as consensus labels if not set
         train_labels = labels if pd_train_labels is None else pd_train_labels
-        
+
         # compute prediction depth on knn training data if test data not provided
         test_intermediates = intermediates_iterable(
             model, dataloader if pd_test_dataloader is None else pd_test_dataloader,
@@ -208,10 +208,11 @@ def knn_predict(
     if test_x is None:
         assert test_labels is None
         test_x = train_x
+        test_labels = train_labels
     else:
         assert test_labels is not None
         test_x = test_x.reshape(test_x.shape[0], -1).detach().cpu().numpy()
-        predictions = torch.tensor(knn.predict(test_x))
+    predictions = torch.tensor(knn.predict(test_x))
     match = predictions == test_labels.detach().cpu()
     return match
 
@@ -253,15 +254,6 @@ def prediction_depth(
             where matches is a torch.Tensor indicating whether the KNN prediction matches the label
             for each layer and example in the N outputs, with shape (L, N).
     """
-    # if test not set, run predict on train
-    if test_intermediates is None:
-        assert test_labels is None
-        test_intermediates = train_intermediates
-        test_labels = train_labels
-    else:
-        assert test_labels is not None
-
-    # if dict, convert to an iterator, if outputs is not None, append softmax
     if isinstance(train_intermediates, dict):
         train_intermediates = train_intermediates.values()
     if isinstance(test_intermediates, dict):
@@ -269,10 +261,20 @@ def prediction_depth(
 
     # compute knns per layer
     knn_predictions = []
-    for i, (train_x, test_x) in enumerate(zip(train_intermediates, test_intermediates)):
-        if verbose:
-            print(f"pd: fitting KNN to layer {i}")
-        knn_predictions.append(knn_predict(train_x, train_labels, test_x, test_labels, k=k))
+
+    # if test not set, run predict on train
+    if test_intermediates is None:
+        assert test_labels is None
+        for i, train_x in enumerate(train_intermediates):
+            if verbose:
+                print(f"pd: fitting KNN to layer {i}")
+            knn_predictions.append(knn_predict(train_x, train_labels, k=k))
+    else:
+        for i, (train_x, test_x) in enumerate(zip(train_intermediates, test_intermediates)):
+            if verbose:
+                print(f"pd: fitting KNN to layer {i}")
+            knn_predictions.append(knn_predict(train_x, train_labels, test_x, test_labels, k=k))
+
     matches = torch.stack(knn_predictions, dim=0)
     matches = matches.to(dtype=train_labels.dtype, device=train_labels.device)
     pd = first_unforgettable(matches)

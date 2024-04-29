@@ -130,10 +130,9 @@ class TestModel(BaseTest):
 
     def test_prediction_depth(self):
         # check that outputs are correct shape and ranges
-        _, z, out, _ = self._evaluate_intermediates(self.layers)
+        _, z, _, _ = self._evaluate_intermediates(self.layers)
         train_z = [v[:self.n // 2] for v in z.values()]
         train_labels = self.data_labels[:self.n // 2]
-        train_out = out[:self.n // 2]
         pd = prediction_depth(train_z, train_labels, z, self.data_labels, k=2)
         self.assertEqual(pd.shape, (self.n,))
         self.assertTrue(torch.all(0 <= pd))
@@ -160,6 +159,20 @@ class TestModel(BaseTest):
         right_shift = [test_points + i*0.2 for i in range(3)]
         pd = prediction_depth(train_points, train_labels, right_shift, labels, k=1)
         self.tensors_equal(pd, torch.tensor([3, 2, 1, 0]))
+
+    def test_intermediates_iterable(self):
+        # check that using a generator to get intermediates for prediction_depth is the same as passing a dict of intermediates
+        # train only
+        generator = intermediates_iterable(self.model, self.dataloader, self.layers, device=self.device)
+        pd = prediction_depth(generator, self.data_labels, k=3)
+        _, z, _, _ = self._evaluate_intermediates(self.layers)
+        self.tensors_equal(pd, prediction_depth(z, self.data_labels, k=3))
+        # train and test
+        train_generator = intermediates_iterable(self.model, self.dataloader, self.layers, device=self.device)
+        test_generator = intermediates_iterable(self.model, self.dataloader, self.layers, device=self.device)
+        pd = prediction_depth(train_generator, 1 - self.data_labels, test_generator, self.data_labels, k=4)
+        _, z, _, _ = self._evaluate_intermediates(self.layers)
+        self.tensors_equal(pd, prediction_depth(z, 1 - self.data_labels, z, self.data_labels, k=4))
 
     def test_prototypes(self):
         repr_layer = 'blocks.5.relu2.out'
@@ -235,7 +248,6 @@ class TestModel(BaseTest):
 
         layers = [scores[f"pdlayer{i}"] for i in range(len(self.layers) + 1)]
         self.tensors_equal(first_unforgettable(torch.stack(layers, dim=0)), scores["pd"])
-
 
 
 if __name__ == '__main__':
