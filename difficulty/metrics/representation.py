@@ -123,10 +123,9 @@ def representation_metrics(
         train_labels = labels if pd_train_labels is None else pd_train_labels
 
         # compute prediction depth on knn training data if test data not provided
-        test_intermediates = intermediates_iterable(
-            model, dataloader if pd_test_dataloader is None else pd_test_dataloader,
-            pd_layers, device=device, verbose=verbose, append_softmax=pd_append_softmax)
-        test_labels = train_labels if pd_test_dataloader is None else torch.cat([labels for _, labels in pd_test_dataloader], dim=0)
+        test_intermediates = None if pd_test_dataloader is None else intermediates_iterable(
+            model, pd_test_dataloader, pd_layers, device=device, verbose=verbose, append_softmax=pd_append_softmax)
+        test_labels = None if pd_test_dataloader is None else torch.cat([labels for _, labels in pd_test_dataloader], dim=0)
 
         pd, knn_outputs = prediction_depth(
             train_intermediates, train_labels, test_intermediates, test_labels, k=pd_k, verbose=verbose, return_matches=True, use_faiss=use_faiss, device=device)
