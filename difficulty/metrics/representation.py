@@ -344,6 +344,7 @@ def self_supervised_prototypes(representations: torch.Tensor, k: int=30, max_ite
             Sorscher et al. (2022) recommends any value within an order of magnitude of the true number classes,
             noting that the performance when using this metric for data pruning is not very sensitive to k. Defaults to 30.
         max_iter (int, optional): number of k-means clustering iterations to run. Defaults to 300.
+        selfproto_random_state (int, optional): deterministic seed for initializing k-means clustering. Defaults to None.
 
     Returns:
         torch.Tensor: distance from examples to cluster centroids (self-supervised prototypes)

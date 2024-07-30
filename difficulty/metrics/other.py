@@ -1,8 +1,9 @@
 import torch
+from scipy.stats import rankdata
 
 
 def rank(metric: torch.Tensor):
-    """Turns metrics into ranks.
+    """Turns metrics into ranks (not differentiable). Smallest rank indicates smallest score.
 
     Args:
         metric (torch.Tensor): array of metrics with dimensions $(\dots, N)$
@@ -11,10 +12,11 @@ def rank(metric: torch.Tensor):
         torch.Tensor: array with same dimensions as metric,
             with values replaced by rank over last dimension $N$.
     """
-    sorted_idx = torch.argsort(metric, dim=-1)
-    return order_to_rank(sorted_idx)
+    # use scipy.stats.rankdata to handle ties automatically
+    # subtract 1 as rankdata starts from 1, not 0
+    return torch.tensor(rankdata(metric, axis=-1) - 1)
 
-#TODO handle ties
+
 def order_to_rank(argsort_idx: torch.Tensor):
     rank_idx = torch.arange(argsort_idx.shape[-1]).broadcast_to(argsort_idx.shape)
     ranks = torch.empty_like(argsort_idx)
