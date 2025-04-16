@@ -177,7 +177,7 @@ def find_intermediate_layers(
         return layers
 
 
-def batch_eval_intermediates(
+def batch_evaluate_intermediates(
         model: nn.Module,
         dataloader: torch.utils.data.DataLoader,
         layers: List[str],
@@ -269,10 +269,10 @@ def evaluate_intermediates(model: nn.Module, dataloader: torch.utils.data.DataLo
 
     Returns:
         Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
-            same output as batch_eval_intermediates, but with batches combined to shape (N, ...)
+            same output as batch_evaluate_intermediates, but with batches combined to shape (N, ...)
     """
     n_examples = len(dataloader.dataset)
-    generator = batch_eval_intermediates(model, dataloader, layers, device=device, verbose=verbose)
+    generator = batch_evaluate_intermediates(model, dataloader, layers, device=device, verbose=verbose)
     inputs, intermediates, outputs, labels = combine_batches(generator, n_examples=n_examples)
     return inputs, intermediates, outputs, labels
 
@@ -308,6 +308,47 @@ def evaluate_model(model: nn.Module,
         model.load_state_dict(state_dict)
     # set layers=[] because no intermediates needed
     _, _, outputs, labels = evaluate_intermediates(model, dataloader, [], device=device)
+    acc = torch.argmax(outputs, dim=-1) == labels if return_accuracy else None
+    loss = None if loss_fn is None else loss_fn(outputs, labels)
+    return outputs, labels, acc, loss
+
+
+def batch_evaluate_model(model: nn.Module,
+                   batch: torch.Tensor,
+                   labels: torch.Tensor,
+                   state_dict: Dict=None,
+                   device: str="cuda",
+                   return_accuracy: bool=False,
+                   loss_fn: nn.Module=None
+) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    """Evaluate model and return outputs, and optionally labels, accuracy, and loss.
+    This does not return intermediate values.
+
+    Args:
+        model (nn.Module): Model to evaluate.
+        batch (torch.Tensor): Data to input to  model.
+        labels (torch.Tensor): target for loss function.
+        state_dict (Dict, optional): If set, load these model parameters before evaluating. Defaults to None.
+        device (str, optional): Device to evaluate on. Defaults to "cuda".
+        return_accuracy (bool, optional): If True, include
+            `torch.argmax(outputs) == labels` in return. Defaults to False.
+        loss_fn (nn.Module, optional): If set, include
+            `loss_fn(outputs, labels)` in return. Defaults to None.
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+            a tuple of (outputs, true labels, accuracy, loss), with first dimension over examples in batch order.
+            If return_accuracy or loss_fn are not set, accuracy or loss are None respectively.
+    """
+    if state_dict is not None:
+        model = deepcopy(model)
+        model.load_state_dict(state_dict)
+
+    model.to(device=device)
+    model.eval()
+    batch = batch.to(device=device)
+    labels = labels.to(device=device)
+    outputs = model(batch)
     acc = torch.argmax(outputs, dim=-1) == labels if return_accuracy else None
     loss = None if loss_fn is None else loss_fn(outputs, labels)
     return outputs, labels, acc, loss

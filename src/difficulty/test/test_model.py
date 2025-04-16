@@ -4,7 +4,7 @@ import numpy.testing as npt
 import torch
 
 from difficulty.test.base import BaseTest
-from difficulty.model.eval import evaluate_model, batch_eval_intermediates, evaluate_intermediates, find_intermediate_layers, combine_batches, split_batches
+from difficulty.model.eval import evaluate_model, batch_evaluate_intermediates, evaluate_intermediates, find_intermediate_layers, combine_batches, split_batches
 from difficulty.metrics import *
 
 
@@ -83,7 +83,7 @@ class TestModel(BaseTest):
         npt.assert_array_equal(layers, ['blocks.0.out', 'blocks.1.out', 'blocks.2.out', 'blocks.3.out', 'blocks.4.out', 'blocks.5.out', ".out"])
 
     def _intermediates_generator(self, layers):  # wrapper to fill in some arguments
-        return batch_eval_intermediates(self.model, self.dataloader, layers, device=self.device)
+        return batch_evaluate_intermediates(self.model, self.dataloader, layers, device=self.device)
 
     def _evaluate_intermediates(self, layers):  # wrapper to fill in some arguments
         return evaluate_intermediates(self.model, self.dataloader, layers, device=self.device)
