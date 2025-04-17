@@ -3,13 +3,10 @@ name = "nn_example_difficulty"
 version = "0.1.0"
 description = ""
 readme = "README.md"
-requires-python = ">=3.7.6"
+requires-python = ">=3.10"
 dependencies = [
+    "numpy==1.26.4",
     "torch==1.13.1",
-    "torchvision==0.14.1",
-    "matplotlib==3.5.2",
-    "tqdm==4.66.3",
-    "scipy==1.7.1",
-    "scikit-learn==1.0.2",
-    "pandas==1.3.5",
+    "scipy==1.15.2",
+    "scikit-learn==1.6.1",
 ]
