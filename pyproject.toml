@@ -1,9 +1,9 @@
 [project]
 name = "nn_example_difficulty"
-version = "0.1.0"
+version = "0.1.1"
 description = ""
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.12"
 dependencies = [
     "numpy==1.26.4",
     "torch==1.13.1",
