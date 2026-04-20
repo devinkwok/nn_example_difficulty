@@ -100,7 +100,7 @@ def load_influence_memorization(dataset="cifar100"):
     path = _precomputed_path("feldman-zhang-influence-memorization")
     if dataset == "cifar100":
         data = np.load(path / "cifar100_high_infl_pairs_infl0.15_mem0.25.npz")
-        return data['tr_idx'], data['tt_idx'], data['infl'], data['mem']
+        return torch.tensor(data['tr_idx']), torch.tensor(data['tt_idx']), torch.tensor(data['infl']), torch.tensor(data['mem'])
     else:
         raise ValueError(f"Unrecognized dataset {dataset}")
 
@@ -112,10 +112,10 @@ def _load_precomputed(directory, file_template, **kwargs):
         if arg not in allowed_args:
             raise ValueError(f"Unrecognized {k}: {arg}")
         format_values[k] = arg
-    return np.load(path / file_template.format(**format_values))['arr_0']
+    return torch.tensor(np.load(path / file_template.format(**format_values))['arr_0'])
 
 
-def load_memorization(dataset):
+def load_memorization(dataset, model="inception"):
     """
     Load precomputed influence and memorization scores from:
 
@@ -125,10 +125,15 @@ def load_memorization(dataset):
 
     Source: https://github.com/google-research/heldout-influence-estimation
     """
+    if dataset == "cifar10" and model == "":
+        raise ValueError(f"Combination does not exist: {model}, {dataset}")
+    if model != "":
+        model = f"-{model}"
     return _load_precomputed(
         "feldman-zhang-influence-memorization",
-        "memorization-{dataset}-0.7.npz",
-        dataset=(dataset, {"cifar100"}),
+        "memorization-{dataset}{model}-0.7.npz",
+        model=(model, {"", "-inception"}),
+        dataset=(dataset, {"cifar10", "cifar100"}),
     )
 
 
