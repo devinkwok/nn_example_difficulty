@@ -242,9 +242,10 @@ def prediction_depth(
         use_faiss=False,
         device="cuda",
 ) -> torch.Tensor:
-    """Functional equivalent of PredictionDepth. Use this function for a single call,
-    whereas the PredictionDepth object is better suited for repeat calls over batches,
-    since it reuses the KNN objects.
+    """From
+    Baldock, R., Maennel, H., and Neyshabur, B. (2021).
+    Deep learning through the lens of example difficulty.
+    Advances In Neural Information Processing Systems, 34.
 
     Args:
         train_intermediates (Union[Iterable, Dict]): iterable or ordered dict of L activations

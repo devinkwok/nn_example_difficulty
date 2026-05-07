@@ -9,16 +9,17 @@ from difficulty.utils import get_dtype, detach_tensors
 from difficulty.metrics.accumulator import OnlineVariance
 
 
-def pointwise_metrics(eval_logits: torch.Tensor,
+def pointwise_metrics(eval_logits_or_softmax: torch.Tensor,
                       labels: torch.Tensor,
                       to_cpu=True,
                       to_numpy=False,
+                      has_softmax_applied=False,
                       dtype: Union[str, torch.dtype]=torch.float64,
     ) -> Dict[str, torch.Tensor]:
-    eval_logits = eval_logits.to(dtype=get_dtype(dtype))
-    prob = softmax(eval_logits)
+    eval_logits_or_softmax = eval_logits_or_softmax.to(dtype=get_dtype(dtype))
+    prob = eval_logits_or_softmax if has_softmax_applied else softmax(eval_logits_or_softmax)
     return detach_tensors({
-        "acc": zero_one_accuracy(eval_logits, labels),
+        "acc": zero_one_accuracy(prob, labels),
         "ent": entropy(prob),
         "conf": class_confidence(prob, labels),
         "maxconf": max_confidence(prob),
@@ -43,8 +44,8 @@ def softmax(eval_logits: torch.Tensor) -> torch.Tensor:
     return softmax
 
 
-def zero_one_accuracy(eval_logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    acc = torch.argmax(eval_logits, dim=-1) == labels
+def zero_one_accuracy(eval_logits_or_softmax: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    acc = torch.argmax(eval_logits_or_softmax, dim=-1) == labels
     return acc
 
 

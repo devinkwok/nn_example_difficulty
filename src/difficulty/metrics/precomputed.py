@@ -127,6 +127,8 @@ def load_memorization(dataset, model="inception"):
     """
     if dataset == "cifar10" and model == "":
         raise ValueError(f"Combination does not exist: {model}, {dataset}")
+    if dataset == "imagenet":
+        return _load_imagenet_memorization()
     if model != "":
         model = f"-{model}"
     return _load_precomputed(
@@ -135,6 +137,19 @@ def load_memorization(dataset, model="inception"):
         model=(model, {"", "-inception"}),
         dataset=(dataset, {"cifar10", "cifar100"}),
     )
+
+
+def _load_imagenet_memorization():
+    path = _precomputed_path("feldman-zhang-influence-memorization")
+    memorization_score_file = path / "imagenet_index.npz"
+    torchvision_data_order = _precomputed_path("imagenet_tr_labels.npz")
+    arrays = np.load(memorization_score_file, allow_pickle=True)
+    # reindex to torchvision data order (sorted by image filename)
+    sort_idx = np.argsort(arrays["tr_filenames"])
+    ref_labels = np.load(torchvision_data_order)["tr_labels"]
+    assert np.all(arrays["tr_labels"][sort_idx] == ref_labels)
+    return arrays["tr_mem"][sort_idx]
+
 
 
 def load_self_supervised_prototypes(dataset, model="swav"):

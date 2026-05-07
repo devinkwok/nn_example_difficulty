@@ -22,6 +22,3 @@ def order_to_rank(argsort_idx: torch.Tensor):
     ranks = torch.empty_like(argsort_idx)
     ranks = torch.scatter(ranks, dim=-1, index=argsort_idx, src=rank_idx)
     return ranks
-
-
-#TODO complexity gap closed-form computation on data
