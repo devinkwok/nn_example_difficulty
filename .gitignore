@@ -5,7 +5,5 @@ outputs/*
 TODO.txt
 difficulty/test/TEMP_TEST_DATA/*
 
-experiments
 precomputed
-old_plots
-scripts
+old

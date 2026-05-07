@@ -625,7 +625,7 @@ def feature_select_experiment(df, feature_selectors, n_examples, classifiers, sa
     selected = pd.concat(selected)
 
     # selection order doesn't matter for random
-    results[results["Feature Selection"] == "Random"]["Selection Order"] = "Top"
+    results.loc[results["Feature Selection"] == "Random", "Selection Order"] = "Top"
 
     if save_name is not None:
         save_results(results, selected, save_name)

@@ -3,11 +3,12 @@ from argparse import ArgumentParser
 
 parser = ArgumentParser()
 parser.add_argument("--debug", type=bool, default=False)
+parser.add_argument("--i", type=int, required=True)
 args = parser.parse_args()
 
-
 DATA_ROOT = "./outputs/combined/"
-FIGURE_ROOT = Path("./outputs/plots/bias")
+FIGURE_ROOT = Path(f"./outputs/plots/bias/{args.i}")
+FIGURE_ROOT.mkdir(exist_ok=True, parents=True)
 N_RUNS = 100
 N_EXAMPLES = 50000
 N_ITERS = 5
@@ -447,8 +448,6 @@ for score_name, df in cifar10_df.groupby("Short Name"):
 result_df = pd.concat(result_df)
 result_df.to_csv(FIGURE_ROOT / "bias_agg_vs_per_example_single_scores.csv")
 
-
-ax = sns.catplot(data=result_df, kind="bar", x="Type", y="Accuracy", hue="Method", col="Score")
-ax.set_xlabels("")
-ax.set_titles("{col_name}")
-save_fig(FIGURE_ROOT, "aggregate_vs_per_example_class", "cifar10", figsize=(15, 5))
+for method, sub_df in result_df.groupby("Method"):
+    ax = sns.barplot(data=sub_df, y="Score", x="Accuracy", hue="Type")
+    save_fig(FIGURE_ROOT, f"aggregate_vs_per_example_class_{method}", "cifar10")
