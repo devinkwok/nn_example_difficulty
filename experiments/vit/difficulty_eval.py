@@ -23,8 +23,8 @@ args = parser.parse_args()
 
 repo_id = "laion/scaling-laws-for-comparison"
 repo_type = "model"
-local_dir = "/home/mila/d/devin.kwok/scratch/2023-difficulty/vit_ckpts/"
-output_dir = "/home/mila/d/devin.kwok/scratch/2023-difficulty/vit_outputs/"
+local_dir = str(Path.home() / "/scratch/2023-difficulty/vit_ckpts/")
+output_dir = str(Path.home() / "/scratch/2023-difficulty/vit_outputs/")
 data_root = "/tmp/data/"
 
 

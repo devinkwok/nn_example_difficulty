@@ -20,8 +20,8 @@ parser.add_argument("--debug", type=bool, default=False)
 args = parser.parse_args()
 
 
-data_root = "/home/mila/d/devin.kwok/scratch/data/"
-output_dir = "/home/mila/d/devin.kwok/scratch/2023-difficulty/vit_outputs/"
+data_root = str(Path.home() / "/scratch/data/")
+output_dir =  str(Path.home() / "/scratch/2023-difficulty/vit_outputs/")
 
 
 def get_filename(folder, epoch):
