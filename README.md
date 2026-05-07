@@ -15,11 +15,14 @@ Usage
 
 Experiments require a special fork of `open_lth` (included in the repository under `open_lth`).
 
-Run `scripts/train_models.sh` to train `open_lth` models.
+- Run `open_lth/scripts/difficulty.sh` to train `open_lth` models and generate scores during training.
+- Run `open_lth/scripts/collate_metrics.py` to combine results into common directories.
+- Run `experiments/trained_ckptmetrics/all_ckptmetrics.sh` to generate example difficulty metrics on completed checkpoints.
+- Run `experiments/vit/difficulty_eval.sh` and `experiments/vit/compute_scores_limited.sh` to do inference and generate scores on pretrained ViT.
+- Run `plots/plot_bias.py` and `plots/plot_features.py` to run and plot feature selection experiments, as the notebooks are quite slow.
 
-Run `scripts/gen-metrics.sh` to generate example difficulty metrics.
+Notebooks in `plots/` contain all plots for the paper.
 
-Notebooks in `scripts/` contain plots.
 
 Development
 -----------
