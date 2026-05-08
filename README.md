@@ -10,6 +10,15 @@ If computing prediction depth from [Baldock et al. (2021) Deep learning through 
 To enable this, you will need to install [Faiss](https://github.com/facebookresearch/faiss) following the instructions in the linked repository.
 Afterwards, set `use_faiss=True` and `device="cuda"` in `prediction_depth` or `representation_metrics`.
 
+
+Pre-computed Scores
+-----
+All scores can be downloaded at:
+[https://huggingface.co/datasets/anonymous-neurips2026-0383/example_difficulty_scores](https://huggingface.co/datasets/anonymous-neurips2026-0383/example_difficulty_scores)
+
+To load scores automatically, place `precomputed` in `src/difficulty`.
+To run plotting scripts, place non-ViT results in `outputs/combined` and ViT results in `outputs/vit`.
+
 Usage
 -----
 
