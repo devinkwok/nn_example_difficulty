@@ -42,106 +42,106 @@ def representation_metrics(
         selfproto_k: int=30,
         selfproto_random_state: int=None,
         selfproto_max_iter: int=300,
-    ):
-        """Generate representation metrics: prediction_depth, supervised_prototypes, and self_supervised_prototypes.
+):
+    """Generate representation metrics: prediction_depth, supervised_prototypes, and self_supervised_prototypes.
 
-        Args:
-            model (nn.Module): Model to evaluate.
-            dataloader (torch.utils.data.DataLoader): Dataloader containing data to evaluate on.
-            device (str, optional): Device to evaluate on. Defaults to "cuda".
-            to_cpu (bool, optional): if results should be moved to cpu. Defaults to True.
-            to_numpy (bool, optional): if results should be converted to numpy arrays. Defaults to False.
-            generate_pointwise_metrics (bool, optional):
-                whether to also call pointwise_metrics (to avoid re-evaluating model). Defaults to False.
-            verbose (bool, optional): Warn when two intermediates are identical and one is discarded.
-                This occurs often when modules are nested. Defaults to False.
-            pd_layers (List[str], optional): Only include these exact layer names. A layer name
-                is the module name followed by ".in" or ".out" indicating the input or output to the module.
-                If not set, use all layers found by `find_intermediate_layers`. Defaults to None.
-            pd_k (int, optional): for prediction depth,
-                number of neighbours to compare in k-nearest neighbours. Defaults to 30.
-            pd_append_softmax (bool, optional): for prediction depth,
-                whether to include softmax of outputs as layer. Defaults to False.
-            pd_train_labels (torch.Tensor, optional): for prediction depth, labels used to fit the KNN, with shape (M,)
-                In Baldock et al. (2021), these are the consensus labels of the knn_activations.
-                If None, use the labels in the dataloader. Defaults to None.
-            pd_test_dataloader (torch.utils.data.DataLoader, optional):
-                Compute prediction depth for this data instead of the dataloader (the dataloader is used to fit the KNN only).
-                If None, use the dataloader to fit the KNN and compute prediction depth. Defaults to None.
-            pd_return_layerpred (bool, optional): If True, return each layer's predicted class as a score
-                with the key "pd_{k}" for the kth layer. Defaults to False.
-            use_faiss (bool, optional): If True, use Faiss library to do K-nearest-neighbor search (faster). Defaults to False.
-            proto_layer (str, optional): for supervised and self-supervised prototypes, name of layer to use as representations.
-                If None, use last layer of network found by `find_intermediate_layers` (excluding softmax). Defaults to None.
-            selfproto_k (int, optional): for self-supervised prototypes,
-                number of means for k-means clustering. Sorscher et al. (2022)
-                recommends any value within an order of magnitude of the true number classes,
-                noting that the performance when using this metric for data pruning
-                is not very sensitive to k. Defaults to 30.
-            selfproto_random_state (int, optional): for self-supervised prototypes,
-                deterministic seed for initializing k-means clustering. Defaults to None.
-            selfproto_max_iter (int, optional): for self-supervised prototypes,
-                number of k-means clustering iterations to run. Defaults to 300.
+    Args:
+        model (nn.Module): Model to evaluate.
+        dataloader (torch.utils.data.DataLoader): Dataloader containing data to evaluate on.
+        device (str, optional): Device to evaluate on. Defaults to "cuda".
+        to_cpu (bool, optional): if results should be moved to cpu. Defaults to True.
+        to_numpy (bool, optional): if results should be converted to numpy arrays. Defaults to False.
+        generate_pointwise_metrics (bool, optional):
+            whether to also call pointwise_metrics (to avoid re-evaluating model). Defaults to False.
+        verbose (bool, optional): Warn when two intermediates are identical and one is discarded.
+            This occurs often when modules are nested. Defaults to False.
+        pd_layers (List[str], optional): Only include these exact layer names. A layer name
+            is the module name followed by ".in" or ".out" indicating the input or output to the module.
+            If not set, use all layers found by `find_intermediate_layers`. Defaults to None.
+        pd_k (int, optional): for prediction depth,
+            number of neighbours to compare in k-nearest neighbours. Defaults to 30.
+        pd_append_softmax (bool, optional): for prediction depth,
+            whether to include softmax of outputs as layer. Defaults to False.
+        pd_train_labels (torch.Tensor, optional): for prediction depth, labels used to fit the KNN, with shape (M,)
+            In Baldock et al. (2021), these are the consensus labels of the knn_activations.
+            If None, use the labels in the dataloader. Defaults to None.
+        pd_test_dataloader (torch.utils.data.DataLoader, optional):
+            Compute prediction depth for this data instead of the dataloader (the dataloader is used to fit the KNN only).
+            If None, use the dataloader to fit the KNN and compute prediction depth. Defaults to None.
+        pd_return_layerpred (bool, optional): If True, return each layer's predicted class as a score
+            with the key "pd_{k}" for the kth layer. Defaults to False.
+        use_faiss (bool, optional): If True, use Faiss library to do K-nearest-neighbor search (faster). Defaults to False.
+        proto_layer (str, optional): for supervised and self-supervised prototypes, name of layer to use as representations.
+            If None, use last layer of network found by `find_intermediate_layers` (excluding softmax). Defaults to None.
+        selfproto_k (int, optional): for self-supervised prototypes,
+            number of means for k-means clustering. Sorscher et al. (2022)
+            recommends any value within an order of magnitude of the true number classes,
+            noting that the performance when using this metric for data pruning
+            is not very sensitive to k. Defaults to 30.
+        selfproto_random_state (int, optional): for self-supervised prototypes,
+            deterministic seed for initializing k-means clustering. Defaults to None.
+        selfproto_max_iter (int, optional): for self-supervised prototypes,
+            number of k-means clustering iterations to run. Defaults to 300.
 
-        Returns:
-            Dict[str, torch.Tensor]: dictionary of representation metrics, and optionally pointwise metrics.
-        """
-        if verbose:
-            stopwatch = Stopwatch("representation_metrics")
-            stopwatch.start()
+    Returns:
+        Dict[str, torch.Tensor]: dictionary of representation metrics, and optionally pointwise metrics.
+    """
+    if verbose:
+        stopwatch = Stopwatch("representation_metrics")
+        stopwatch.start()
 
-        if pd_layers is None or proto_layer is None:  # automatically search for all layers
-            batch_shape = next(iter(dataloader))[0].shape
-            all_layers = find_intermediate_layers(model, batch_shape[1:], device=device)
+    if pd_layers is None or proto_layer is None:  # automatically search for all layers
+        batch_shape = next(iter(dataloader))[0].shape
+        all_layers = find_intermediate_layers(model, batch_shape[1:], device=device)
 
-        #### prototypes
-        # use last layer as representation by default
-        proto_layer = all_layers[-1] if proto_layer is None else proto_layer
-        _, representations, outputs, labels = evaluate_intermediates(model, dataloader, [proto_layer], device=device, verbose=verbose)
-        # make higher precision
-        representations = representations[proto_layer].to(dtype=dtype)
+    #### prototypes
+    # use last layer as representation by default
+    proto_layer = all_layers[-1] if proto_layer is None else proto_layer
+    _, representations, outputs, labels = evaluate_intermediates(model, dataloader, [proto_layer], device=device, verbose=verbose)
+    # make higher precision
+    representations = representations[proto_layer].to(dtype=dtype)
 
-        proto = supervised_prototypes(representations, labels)
-        if verbose: stopwatch.lap("supervised_prototypes")
+    proto = supervised_prototypes(representations, labels)
+    if verbose: stopwatch.lap("supervised_prototypes")
 
-        selfproto = self_supervised_prototypes(representations, k=selfproto_k, max_iter=selfproto_max_iter, random_state=selfproto_random_state)
-        if verbose: stopwatch.stop("self_supervised_prototypes")
+    selfproto = self_supervised_prototypes(representations, k=selfproto_k, max_iter=selfproto_max_iter, random_state=selfproto_random_state)
+    if verbose: stopwatch.stop("self_supervised_prototypes")
 
-        metrics = {**detach_tensors({
-                "proto": proto,
-                "selfproto": selfproto,
-            }, to_cpu=to_cpu, to_numpy=to_numpy)
-        }
+    metrics = {**detach_tensors({
+            "proto": proto,
+            "selfproto": selfproto,
+        }, to_cpu=to_cpu, to_numpy=to_numpy)
+    }
 
-        #### prediction depth
-        # include all layers if no particular layers specified
-        pd_layers = all_layers if pd_layers is None else pd_layers
+    #### prediction depth
+    # include all layers if no particular layers specified
+    pd_layers = all_layers if pd_layers is None else pd_layers
 
-        train_intermediates = intermediates_iterable(
-            model, dataloader, pd_layers, device=device, verbose=verbose, append_softmax=pd_append_softmax)
-        # use true labels as consensus labels if not set
-        train_labels = labels if pd_train_labels is None else pd_train_labels
+    train_intermediates = intermediates_iterable(
+        model, dataloader, pd_layers, device=device, verbose=verbose, append_softmax=pd_append_softmax)
+    # use true labels as consensus labels if not set
+    train_labels = labels if pd_train_labels is None else pd_train_labels
 
-        # compute prediction depth on knn training data if test data not provided
-        test_intermediates = None if pd_test_dataloader is None else intermediates_iterable(
-            model, pd_test_dataloader, pd_layers, device=device, verbose=verbose, append_softmax=pd_append_softmax)
-        test_labels = None if pd_test_dataloader is None else torch.cat([labels for _, labels in pd_test_dataloader], dim=0)
+    # compute prediction depth on knn training data if test data not provided
+    test_intermediates = None if pd_test_dataloader is None else intermediates_iterable(
+        model, pd_test_dataloader, pd_layers, device=device, verbose=verbose, append_softmax=pd_append_softmax)
+    test_labels = None if pd_test_dataloader is None else torch.cat([labels for _, labels in pd_test_dataloader], dim=0)
 
-        pd, knn_outputs = prediction_depth(
-            train_intermediates, train_labels, test_intermediates, test_labels, k=pd_k, verbose=verbose, return_matches=True, use_faiss=use_faiss, device=device)
-        if verbose: stopwatch.lap("prediction_depth")
+    pd, knn_outputs = prediction_depth(
+        train_intermediates, train_labels, test_intermediates, test_labels, k=pd_k, verbose=verbose, return_matches=True, use_faiss=use_faiss, device=device)
+    if verbose: stopwatch.lap("prediction_depth")
 
-        metrics = {**metrics, **detach_tensors({"pd": pd}, to_cpu=to_cpu, to_numpy=to_numpy)}
-        if pd_return_layerpred:
-            knn_outputs = {f"pdlayer{i}": x for i, x in enumerate(knn_outputs)}
-            metrics = {**metrics, **detach_tensors(knn_outputs, to_cpu=to_cpu, to_numpy=to_numpy)}
+    metrics = {**metrics, **detach_tensors({"pd": pd}, to_cpu=to_cpu, to_numpy=to_numpy)}
+    if pd_return_layerpred:
+        knn_outputs = {f"pdlayer{i}": x for i, x in enumerate(knn_outputs)}
+        metrics = {**metrics, **detach_tensors(knn_outputs, to_cpu=to_cpu, to_numpy=to_numpy)}
 
-        #### other metrics
-        if generate_pointwise_metrics:
-            metrics = {**metrics, **pointwise_metrics(outputs, labels, to_cpu=to_cpu, to_numpy=to_numpy)}
-        if verbose: stopwatch.lap("pointwise_metrics")
+    #### other metrics
+    if generate_pointwise_metrics:
+        metrics = {**metrics, **pointwise_metrics(outputs, labels, to_cpu=to_cpu, to_numpy=to_numpy)}
+    if verbose: stopwatch.lap("pointwise_metrics")
 
-        return metrics
+    return metrics
 
 
 def intermediates_iterable(

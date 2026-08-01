@@ -5,6 +5,16 @@ from typing import Union, Dict, List
 import torch
 
 
+def match_key(key: str, include: List[str] = None, exclude: List[str] = None):
+    if include is not None:
+        if not any(k in key for k in include):
+            return False
+    if exclude is not None:
+        if any(k in key for k in exclude):
+            return False
+    return True
+
+
 class Stopwatch:
     def __init__(self, name="STOPWATCH", verbose=False):
         self.name = name
@@ -120,6 +130,10 @@ def to_numpy(metrics: Dict[str, torch.Tensor], dtype=torch.float64, prefix=None)
 
 def stack_metrics(metrics: Dict[str, torch.Tensor], dim=0, prefix=None) -> Dict[str, torch.Tensor]:
     return apply(metrics, prefix, lambda x: torch.stack(x, dim=dim))
+
+
+def concat_metrics(metrics: Dict[str, torch.Tensor], dim=0, prefix=None) -> Dict[str, torch.Tensor]:
+    return apply(metrics, prefix, lambda x: torch.cat(x, dim=dim))
 
 
 def average_metrics(metrics: Dict[str, torch.Tensor], dim=0, dtype=torch.float64, prefix="avg") -> Dict[str, torch.Tensor]:

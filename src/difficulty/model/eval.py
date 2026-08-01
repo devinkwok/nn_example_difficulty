@@ -6,7 +6,7 @@ from typing import Iterable, List, Tuple, Dict, Generator, Optional
 import torch
 import torch.nn as nn
 
-from difficulty.utils import ConcatTensor
+from difficulty.utils import ConcatTensor, match_key
 
 
 def is_identity(x: torch.tensor, y: torch.tensor):
@@ -111,16 +111,6 @@ class SaveIntermediateHook:
             value = value.detach().clone().to(device=self.device)
             assert key not in self.intermediates, key
             self.intermediates[key] = value
-
-
-def match_key(key: str, include: List[str] = None, exclude: List[str] = None):
-    if include is not None:
-        if not any(k in key for k in include):
-            return False
-    if exclude is not None:
-        if any(k in key for k in exclude):
-            return False
-    return True
 
 
 def find_intermediate_layers(

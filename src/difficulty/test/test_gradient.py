@@ -143,7 +143,7 @@ class TestModel(BaseTest):
         self.assertTrue(torch.all(torch.less(torch.abs(grand), 1e-3)))
         # check that functional gradient is same as computing each data point's gradient individually
         grand = gradient_norm(self.model, self.data, self.data_labels)
-        grand_1 = functional_gradient_norm(self.model, self.data, self.data_labels)
+        grand_1 = functional_gradient(self.model, self.data, self.data_labels, grad_transform=lambda x: torch.linalg.norm(x, dim=-1))
         self.all_close(grand, grand_1)
         grand_2 = grand_score(self.model, self.dataloader)
         self.all_close(grand, grand_2)
@@ -154,6 +154,51 @@ class TestModel(BaseTest):
         self._returns_output(lambda m, d: grand_score(
             m, [(d, torch.zeros(len(d), dtype=torch.long))], return_output=True))
 
+    def test_tracin(self):
+        self.model.eval()
+        single_data = torch.utils.data.TensorDataset(self.data[:1], self.data_labels[:1])
+        single_dataloader = torch.utils.data.DataLoader(single_data)
+        grad = functional_gradient(self.model, *next(iter(single_dataloader)))
+        # loss of 0 should give TracIN of 0
+        est_labels = self.model(self.data).detach()
+        custom_mse_loss = lambda x, y: torch.mean(nn.MSELoss(reduction="none")(x, y), dim=1)
+        tracin = tracin_score(self.model, [(self.data, est_labels)], torch.ones_like(grad), loss_fn=custom_mse_loss)
+        self.assertEqual(tuple(tracin.shape), (len(self.data), 1))
+        self.all_close(tracin, torch.zeros_like(tracin))
+        # single train example with same example as val should give sqrt of grand
+        tracin = tracin_score(self.model, single_dataloader, grad)
+        scores = gradient_product_scores(self.model, single_dataloader, single_dataloader)
+        self.assertAlmostEqual(scores["tracin1"].item(), tracin.item())
+        self.assertAlmostEqual(scores["tracin1"].item()**0.5, scores["grand"].item())
+        # dot product with ones should equal sum over grad
+        tracin = tracin_score(self.model, single_dataloader, torch.ones_like(grad))
+        self.assertAlmostEqual(tracin.item(), torch.sum(grad).item())
+        # check that val_samples and val_seeds work
+        scores = gradient_product_scores(self.model, self.dataloader, self.dataloader, val_samples=[2, 10, len(self.data)], val_seeds=[1, 1, 1])
+        scores2 = gradient_product_scores(self.model, self.dataloader, self.dataloader, val_samples=[2, 10, len(self.data)], val_seeds=[1, 2, 2])
+        self.all_close(scores["tracin2"], scores2["tracin2"])
+        self.assertGreater(torch.linalg.norm(scores["tracin10"] - scores2["tracin10"]).item(), 0.1)
+        self.all_close(scores[f"tracin{len(self.data)}"], scores2[f"tracin{len(self.data)}"])
+        # check exclude and include work by only having bias in final layer
+        n_bias = len(self.model.fc.bias)
+        tracin = tracin_score(self.model, single_dataloader, torch.ones(n_bias, dtype=grad.dtype), include=["fc"], exclude=["weight"])
+        self.assertAlmostEqual(tracin.item(), torch.sum(grad[:, -n_bias:]).item())
+        scores = gradient_product_scores(self.model, single_dataloader, single_dataloader, val_samples=[2, 3], include=["fc"], exclude=["weight"])
+        self.assertSetEqual(set(scores.keys()), {"grand", "grandpartial", "tracin2", "tracin2partial", "tracin3", "tracin3partial"})
+        # batch size should not matter
+        other_dataloader = torch.utils.data.DataLoader(self.dataloader.dataset, shuffle=False, batch_size=self.batch_size // 2)
+        data, labels = list(zip(*[(x, y) for x, y in other_dataloader]))
+        self.assertTrue(torch.equal(torch.cat(data, dim=0), self.data))
+        self.assertTrue(torch.equal(torch.cat(labels, dim=0), self.data_labels))
+        val_grad1 = get_val_gradient(self.model, self.dataloader, self.device)
+        val_grad2 = get_val_gradient(self.model, self.dataloader, self.device)
+        val_grad3 = get_val_gradient(self.model, other_dataloader, self.device)
+        self.all_close(val_grad1, val_grad2)
+        self.all_close(val_grad1, val_grad3)
+        scores = gradient_product_scores(self.model, self.dataloader, self.dataloader)
+        scores2 = gradient_product_scores(self.model, other_dataloader, other_dataloader)
+        for k in scores.keys():
+            self.all_close(scores[k], scores2[k])
 
 if __name__ == '__main__':
     unittest.main()
