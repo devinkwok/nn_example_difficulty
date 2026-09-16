@@ -78,26 +78,28 @@ def gradient_product_scores(
 
     # get validation gradients
     val_grad = []
-    val_grad_partial = []
-    compute_partial = False
     for n, s in zip(val_samples, val_seeds):
         grad = get_val_gradient(model, val_dataloader, device, loss_fn=val_loss_fn, n_samples=n, seed=s, concat=False)
         val_grad.append(torch.cat([v for k, v in grad]))
-
-        # check if include and exclude take a proper subset of the gradients
-        partial_grad = [(k, v) for k, v in grad if match_key(k, include=include, exclude=exclude)]
-        if compute_partial or {k for k, v in grad} != {k for k, v in partial_grad}:
-            compute_partial = True
-            val_grad_partial.append(torch.cat([v for k, v in partial_grad]))
-
     val_grad = torch.stack(val_grad, dim=1)
+
+    # check if include and exclude take a proper subset of the gradients
+    partial_grad = [(k, v) for k, v in grad if match_key(k, include=include, exclude=exclude)]
+    compute_partial = {k for k, v in grad} != {k for k, v in partial_grad}
+
+    val_grad_partial = []
     if compute_partial:
+        for n, s in zip(val_samples, val_seeds):
+            val_grad_partial.append(torch.cat([v for k, v in partial_grad]))
         val_grad_partial = torch.stack(val_grad_partial, dim=1)
 
     def compute_gradient_product_scores(model, inputs, labels):
         scores = {}
 
         gradients, _ = _functional_gradient(model, inputs, labels, loss_fn=loss_fn, dtype=dtype)
+        differing_keys = {k for k, v in grad}.symmetric_difference({k for k, v in gradients})
+        if len(differing_keys) > 0:
+            raise ValueError(f"Train and validation gradients don't match, set requires_grad=False for parameters not affected by loss.backward(). Affected keys: {differing_keys}")
         scores["grand"] = _filter_and_transform_gradient(gradients, grad_transform=lambda x: torch.linalg.norm(x, dim=-1))
 
         val_dotprod = _filter_and_transform_gradient(gradients, grad_transform=lambda x: x @ val_grad)
@@ -291,17 +293,17 @@ def _functional_gradient(
         loss_fn = nn.CrossEntropyLoss(reduction="none")
 
     model.eval()
-    func_model, params, buffers = make_functional_with_buffers(model)
-    def model_loss(p, b, x, z):
-        y = func_model(p, b, x)
+    def model_loss(p, x, z):
+        y = torch.func.functional_call(model, p, x)
         loss = loss_fn(y, z)
         return loss, y
 
-    params = tuple(x.detach() for x in model.parameters())
-    jacobian, outputs = jacrev(model_loss, argnums=0, has_aux=True)(params, buffers, inputs, labels)
-
+    params = {k: v for k, v in model.named_parameters() if v.requires_grad}
+    if params == {}:
+        raise ValueError(f"No parameters require grad in model: {[(k, v.requires_grad) for k, v in model.named_parameters()]}")
+    jacobian, outputs = jacrev(model_loss, argnums=0, has_aux=True)(params, inputs, labels)
     n_examples = inputs.shape[0]
-    gradients = [(k, jacobian[i].detach().reshape(n_examples, -1).to(dtype=dtype)) for i, (k, _) in enumerate(model.named_parameters())]
+    gradients = [(k, v.detach().reshape(n_examples, -1).to(dtype=dtype)) for k, v in jacobian.items()]
     return gradients, outputs.detach().to(dtype=dtype)
 
 
@@ -465,7 +467,7 @@ def get_val_gradient(
 
     model.zero_grad()
     for x, y in dataloader:
-        y_pred = model.forward(x.to(device=device))
+        y_pred = model(x.to(device=device))
         loss = loss_fn(y_pred, y.to(device=device))
         loss.backward()
 

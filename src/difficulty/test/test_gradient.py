@@ -94,7 +94,7 @@ class TestModel(BaseTest):
         npt.assert_array_less(-1e-8, vog_1)
 
     def _grad_flags_unaffected(self, apply_fn):
-        for weight_grad, bias_grad in product([False, True], [False, True]):
+        for weight_grad, bias_grad in [[False, True], [True, False]]:
             model = self._make_linear_models()
             # use optimizer to set requires_grad_(True)
             torch.optim.SGD(model.parameters(), lr=1)

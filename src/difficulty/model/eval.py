@@ -96,6 +96,9 @@ class SaveIntermediateHook:
         self._add_if_missing(layer_name + ".out", return_val)
 
     def _add_if_missing(self, key, value):
+        if isinstance(value, tuple):
+            if self.verbose: warnings.warn(f"Module {key} has {len(value)} outputs of type {[type(x) for x in value]}, only saving first")
+            value = value[0]
         # copy value to prevent it from changing in later operations
         if self.layers is None:
             if match_key(key, self.include, self.exclude):

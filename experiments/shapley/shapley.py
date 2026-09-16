@@ -17,11 +17,6 @@ from difficulty.metrics.gradient import gradient_product_scores
 from difficulty.utils import detach_tensors, Stopwatch, match_key
 from open_lth import api
 
-# PROTO_REPRESENTATION_LAYER = {
-#     "cifar_resnet": "fc.in",
-#     "cifar_vgg": "fc.in",
-# }
-
 
 def get_by_model_name(model_hparams, model_to_value_dict, failure_msg):
     model_name = model_hparams.model_name
@@ -93,8 +88,6 @@ def generate_scores(args):
                 to_cpu=True,
                 to_numpy=True,
             )
-        # check that grad scores are close
-        grand = load_scores(save_dir, ["grand"], ep_it, args.device)
         scores["NEWgrand"] = scores["grand"]
         del scores["grand"]
         
@@ -108,7 +101,7 @@ if __name__ == "__main__":
     parser.add_argument('--ckpt', required=True, type=Path)
     parser.add_argument('--train', default=False, action="store_true")
     parser.add_argument('--val_samples', default="1,100,10000", type=str)
-    parser.add_argument('--include', default="fc", type=str)
+    parser.add_argument('--include', default="", type=str)
     parser.add_argument('--exclude', default="", type=str)
     parser.add_argument('--batch_size', default=128, type=int)
     parser.add_argument('--device', default="cuda", type=str)

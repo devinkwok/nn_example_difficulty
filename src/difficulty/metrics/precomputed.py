@@ -15,6 +15,7 @@ __all__ = [
     "load_influence_memorization",
     "load_memorization",
     "load_self_supervised_prototypes",
+    "load_imagenet_classes",
 ]
 
 
@@ -167,3 +168,8 @@ def load_self_supervised_prototypes(dataset, model="swav"):
         dataset=(dataset, {"cifar10", "cifar100"}),
         model=(model, {"swav"}),
     )
+
+
+def load_imagenet_classes():
+    path = _precomputed_path("imagenet_tr_labels.npz")
+    return np.load(path)["classes"]
